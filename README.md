@@ -23,6 +23,7 @@ tools/config/          프로젝트 그룹·색상 설정
 scripts/llmwiki.py     ingest/build/query/get/render/outline/export-md/lint/log CLI
 scripts/llmwiki_context.py  Codex·Claude 자동 컨텍스트 주입 hook/MCP CLI
 scripts/install.sh     자동 주입 설치·검증·제거 (POSIX, macOS/Linux)
+scripts/install.ps1    같은 것의 Windows 판 (PowerShell 5.1+)
 tests/                 백엔드 unittest 스위트
 tests/fixtures/pages/  기능 검증용 데모 데이터 (실제 위키 문서 아님)
 viewer/                Obsidian-style 2D/3D Graph View
@@ -98,13 +99,20 @@ block id는 `block:<slug>:<내용 지문>:<중복 순번>` 형태라, 페이지 
 
 `scripts/llmwiki_context.py`는 Codex와 Claude Code의 `UserPromptSubmit` hook으로 붙어, 질문마다 정본에서 근거를 찾아 `<llmwiki-context>` 블록으로 주입합니다. 검색과 주입 본문 모두 `wiki/**/*.json`에서만 나오고, qmd는 후보 slug 탐색에만 씁니다. 관련도가 낮으면 아무것도 주입하지 않고, 어떤 오류에서도 질문을 막지 않습니다.
 
-설치는 `scripts/install.sh` 하나로 끝납니다. clone 경로는 어디여도 되고, 스크립트가 자기 위치에서 repo root를 찾습니다.
+설치는 스크립트 하나로 끝납니다. clone 경로는 어디여도 되고, 스크립트가 자기 위치에서 repo root를 찾습니다.
 
 ```bash
 ./scripts/install.sh --dry-run   # 무엇이 바뀔지 먼저 본다 (아무것도 쓰지 않음)
 ./scripts/install.sh             # 설치 (여러 번 돌려도 결과가 같음)
 ./scripts/install.sh verify      # 상태 점검
 ./scripts/install.sh uninstall   # 넣은 것만 정확히 제거
+```
+
+Windows에서는 같은 명령·같은 옵션의 PowerShell 판을 씁니다 (WSL 안이라면 위쪽 `install.sh`가 맞습니다):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -DryRun
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
 기존 hook 그룹·설정·지침 본문은 읽은 그대로 되돌려 쓰고, 남의 qmd collection과 이미 등록된 MCP 서버는 건드리지 않습니다. 설치 직전 상태는 `<파일>.llmwiki-bak`으로 남습니다.

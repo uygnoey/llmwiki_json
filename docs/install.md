@@ -1,4 +1,4 @@
-# 설치 — `scripts/install.sh`
+# 설치 — `scripts/install.sh` · `scripts/install.ps1`
 
 이 저장소를 clone 한 뒤 한 번 실행하면, Codex 와 Claude Code 가 모든 질문 앞에서
 이 위키의 정본 근거를 자동으로 붙이기 시작한다.
@@ -20,11 +20,41 @@ cd ~/anywhere/llmwiki_json
 |---|---|
 | macOS (Darwin) | 개발·검증 환경. 실제 Codex 0.148.0 / Claude Code 2.1.237 에서 확인 |
 | Linux | 같은 POSIX 경로로 동작. `/usr/bin/python3` 를 우선 사용 |
-| WSL | Linux 로 취급된다 |
-| 그 외 (네이티브 Windows, *BSD) | 미검증. `--force` 로 강행할 수는 있다 |
+| WSL | Linux 로 취급된다 — `install.sh` 를 쓴다 |
+| 네이티브 Windows | `scripts/install.ps1`. Windows PowerShell 5.1 과 PowerShell 7 |
+| 그 외 (*BSD) | 미검증. `--force` 로 강행할 수는 있다 |
 
-`/bin/sh` 만 있으면 되고 bash 기능은 쓰지 않는다. macOS 의 `readlink` 에 `-f` 가
-없는 것까지 감안해 symlink 를 직접 따라간다.
+POSIX 쪽은 `/bin/sh` 만 있으면 되고 bash 기능은 쓰지 않는다. macOS 의 `readlink`
+에 `-f` 가 없는 것까지 감안해 symlink 를 직접 따라간다.
+
+## Windows
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -DryRun
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 verify
+```
+
+명령과 옵션은 POSIX 쪽과 같다. `-DryRun` 처럼 PowerShell 식으로도, `--dry-run`
+처럼 POSIX 식으로도 받는다 — 문서 한 벌로 양쪽을 설명하기 위해서다.
+`tests/test_install_windows.py::ParityTest` 가 두 스크립트의 옵션 목록을 서로
+대조하므로, 한쪽에만 옵션이 생기면 시험이 깨진다.
+
+Windows 에서 달라지는 것은 hook 에 박히는 한 줄이다. 클라이언트가 hook 을
+`cmd.exe` 로 돌리기 때문에 POSIX 의 `sh` 문법은 한 글자도 통하지 않는다.
+`llmwiki_context.hook_command()` 가 플랫폼을 보고 둘 중 하나를 고르며, 설치와
+`verify` 가 같은 함수를 쓰므로 설치한 것과 점검하는 것이 어긋날 수 없다.
+
+```
+POSIX    if [ -r <script> ] && [ -x <python> ]; then <python> <script> hook ...
+Windows  ("<python>" "<script>" hook 2>nul) || (more>nul 2>nul)
+```
+
+양쪽 모두 인터프리터나 스크립트가 사라져도 stdin 을 비우고 조용히 성공한다 —
+hook 이 프롬프트를 막는 일은 없다.
+
+**검증 범위**: PowerShell 7.6.5 에서 구문·인자 처리·dry-run 까지 확인했다.
+실제 Windows 기계의 Codex/Claude Code 를 상대로는 아직 돌려 보지 않았다.
 
 **의존성**: 셸과 `curl` 또는 `wget` 뿐이다. Python 과 qmd 는 없으면 받아 온다.
 `codex` / `claude` 는 있는 것만 대상으로 잡는다.

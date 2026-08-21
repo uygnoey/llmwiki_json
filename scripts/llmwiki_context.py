@@ -783,6 +783,14 @@ HOOK_TEMPLATE = (
     "{python} {script} hook 2>/dev/null || :; "
     "else {{ command -p cat 2>/dev/null || cat; }} >/dev/null 2>&1 || :; fi"
 )
+# Windows 의 클라이언트는 hook 을 cmd.exe 로 돌린다. 위 sh 문법은 한 글자도
+# 통하지 않으므로 같은 뜻을 cmd 로 다시 쓴다. cmd 에는 `[ -r ]` 이 없어서
+# 존재 검사 대신 실패를 받아 낸다 — 인터프리터가 없으면 9009, 스크립트가
+# 없으면 파이썬이 2 로 죽고, 둘 다 `||` 오른쪽으로 떨어져 stdin 을 비우고
+# 조용히 성공한다. `more` 가 POSIX 쪽 `cat >/dev/null` 자리다.
+HOOK_TEMPLATE_WINDOWS = (
+    "({python} {script} hook 2>nul) || (more>nul 2>nul)"
+)
 
 
 def home() -> Path:
@@ -807,9 +815,29 @@ def hook_python() -> str:
     return sys.executable
 
 
-def hook_command(python: str | None = None, script: Path | None = None) -> str:
-    return HOOK_TEMPLATE.format(python=shlex.quote(python or hook_python()),
-                                script=shlex.quote(str(script or Path(__file__).resolve())))
+def win_quote(value: str) -> str:
+    """cmd.exe 용 인용.
+
+    `shlex.quote` 는 홑따옴표를 쓴다 — cmd 는 홑따옴표를 인용부호로 보지 않고
+    경로의 일부로 읽으므로 `\'C:\\Python\\python.exe\'` 는 없는 파일이 된다.
+    Windows 는 파일명에 `"` 를 허용하지 않으니 겹따옴표로 감싸는 것으로 끝이다.
+    """
+    return f'"{value}"'
+
+
+def hook_command(python: str | None = None, script: Path | None = None,
+                 *, windows: bool | None = None) -> str:
+    """hook 에 박을 한 줄. 플랫폼마다 이 줄을 돌리는 셸이 다르다.
+
+    `windows` 를 주지 않으면 지금 도는 OS 를 따른다. 설치기와 verify 가 같은
+    함수를 쓰므로, 설치한 것과 점검하는 것이 어긋날 수 없다.
+    """
+    if windows is None:
+        windows = os.name == "nt"
+    quote = win_quote if windows else shlex.quote
+    template = HOOK_TEMPLATE_WINDOWS if windows else HOOK_TEMPLATE
+    return template.format(python=quote(python or hook_python()),
+                           script=quote(str(script or Path(__file__).resolve())))
 
 
 def load_json(path: Path, fallback: Any) -> Any:

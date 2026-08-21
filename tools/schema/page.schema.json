@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://llmwiki.local/schemas/page.schema.json",
+  "title": "llmwiki JSON page",
+  "type": "object",
+  "required": ["schema_version", "id", "slug", "title", "type", "created", "updated", "tags", "projects", "sources", "blocks", "block_order", "links", "history"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "id": {"type": "string", "pattern": "^page:[a-z0-9가-힣][a-z0-9가-힣._:-]*$"},
+    "slug": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "type": {"enum": ["source", "entity", "concept", "synthesis", "project", "home", "index", "log"]},
+    "created": {"type": "string", "format": "date"},
+    "updated": {"type": "string", "format": "date"},
+    "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "projects": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "sources": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "raw_ref": {"type": ["string", "null"]},
+    "summary": {"type": "string"},
+    "blocks": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/block"}
+    },
+    "block_order": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "links": {"type": "array", "items": {"$ref": "#/$defs/link"}},
+    "history": {"type": "array", "items": {"$ref": "#/$defs/history"}},
+    "source_snapshot": {"$ref": "#/$defs/sourceSnapshot"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "block": {
+      "type": "object",
+      "required": ["id", "kind", "data", "refs", "source_text", "fingerprint"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^block:"},
+        "kind": {"enum": ["heading", "paragraph", "list", "table", "quote", "conflict", "current", "code", "thematic_break", "markdown", "raw"]},
+        "data": {"type": "object"},
+        "refs": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "source_text": {"type": "string"},
+        "fingerprint": {"type": "string"},
+        "resolution": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {"status": {"enum": ["unresolved", "resolved"]}, "current": {"type": "string"}, "decided_at": {"type": "string"}},
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "link": {
+      "type": "object",
+      "required": ["target", "kind"],
+      "properties": {"target": {"type": "string"}, "label": {"type": "string"}, "anchor": {"type": "string"}, "kind": {"enum": ["wiki", "source", "supersedes", "related"]}, "block_id": {"type": "string"}},
+      "additionalProperties": false
+    },
+    "history": {
+      "type": "object",
+      "required": ["at", "action", "actor"],
+      "properties": {"at": {"type": "string"}, "action": {"type": "string"}, "actor": {"type": "string"}, "note": {"type": "string"}},
+      "additionalProperties": false
+    },
+    "sourceSnapshot": {
+      "type": "object",
+      "required": ["format", "text", "sha256"],
+      "properties": {"format": {"enum": ["markdown", "json", "xml", "html", "text"]}, "text": {"type": "string"}, "sha256": {"type": "string"}},
+      "additionalProperties": false
+    }
+  }
+}
+

@@ -1,0 +1,122 @@
+{
+  "schema_version": "1.0",
+  "id": "page:team-handbook",
+  "slug": "team-handbook",
+  "title": "Team Handbook v2",
+  "type": "source",
+  "created": "2026-08-21",
+  "updated": "2026-08-21",
+  "tags": [
+    "handbook",
+    "onboarding"
+  ],
+  "projects": [],
+  "sources": [],
+  "raw_ref": "raw/demo/team-handbook.md",
+  "summary": "Demo page for the framework.",
+  "blocks": {
+    "block:team-handbook:da14808f1b1fe71e:1": {
+      "id": "block:team-handbook:da14808f1b1fe71e:1",
+      "kind": "heading",
+      "data": {
+        "level": 1,
+        "text": "Team Handbook v2"
+      },
+      "refs": [],
+      "source_text": "# Team Handbook v2",
+      "fingerprint": "da14808f1b1fe71e"
+    },
+    "block:team-handbook:ccbd185cc0a7da9a:1": {
+      "id": "block:team-handbook:ccbd185cc0a7da9a:1",
+      "kind": "paragraph",
+      "data": {
+        "text": "A short reference for how the Alpha and Beta workstreams run day to day."
+      },
+      "refs": [],
+      "source_text": "A short reference for how the Alpha and Beta workstreams run day to day.",
+      "fingerprint": "ccbd185cc0a7da9a"
+    },
+    "block:team-handbook:b35bd7e6475e161b:1": {
+      "id": "block:team-handbook:b35bd7e6475e161b:1",
+      "kind": "heading",
+      "data": {
+        "level": 2,
+        "text": "Review"
+      },
+      "refs": [],
+      "source_text": "## Review",
+      "fingerprint": "b35bd7e6475e161b"
+    },
+    "block:team-handbook:0ad3ed35bfd87f55:1": {
+      "id": "block:team-handbook:0ad3ed35bfd87f55:1",
+      "kind": "paragraph",
+      "data": {
+        "text": "Every change is reviewed by one person who did not write it. A review that\nfinds nothing is still recorded, so the trail is complete either way."
+      },
+      "refs": [],
+      "source_text": "Every change is reviewed by one person who did not write it. A review that\nfinds nothing is still recorded, so the trail is complete either way.",
+      "fingerprint": "0ad3ed35bfd87f55"
+    },
+    "block:team-handbook:2b92e5602cdc385e:1": {
+      "id": "block:team-handbook:2b92e5602cdc385e:1",
+      "kind": "heading",
+      "data": {
+        "level": 2,
+        "text": "Releases"
+      },
+      "refs": [],
+      "source_text": "## Releases",
+      "fingerprint": "2b92e5602cdc385e"
+    },
+    "block:team-handbook:db61c927af11cf85:1": {
+      "id": "block:team-handbook:db61c927af11cf85:1",
+      "kind": "paragraph",
+      "data": {
+        "text": "Releases go out on Thursdays. A release note names the change, the reviewer\nand the rollback step. See [[release-process]] and [[review-policy]]."
+      },
+      "refs": [
+        "release-process",
+        "review-policy"
+      ],
+      "source_text": "Releases go out on Thursdays. A release note names the change, the reviewer\nand the rollback step. See [[release-process]] and [[review-policy]].",
+      "fingerprint": "db61c927af11cf85"
+    }
+  },
+  "block_order": [
+    "block:team-handbook:da14808f1b1fe71e:1",
+    "block:team-handbook:ccbd185cc0a7da9a:1",
+    "block:team-handbook:b35bd7e6475e161b:1",
+    "block:team-handbook:0ad3ed35bfd87f55:1",
+    "block:team-handbook:2b92e5602cdc385e:1",
+    "block:team-handbook:db61c927af11cf85:1"
+  ],
+  "links": [
+    {
+      "target": "release-process",
+      "label": "release-process",
+      "anchor": "",
+      "kind": "wiki",
+      "block_id": "block:team-handbook:db61c927af11cf85:1"
+    },
+    {
+      "target": "review-policy",
+      "label": "review-policy",
+      "anchor": "",
+      "kind": "wiki",
+      "block_id": "block:team-handbook:db61c927af11cf85:1"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-08-21",
+      "action": "ingested",
+      "actor": "llmwiki-cli",
+      "note": "raw/demo/team-handbook.md"
+    }
+  ],
+  "source_snapshot": {
+    "format": "markdown",
+    "text": "---\ntype: source\ntags: [handbook, onboarding]\n---\n# Team Handbook v2\n\nA short reference for how the Alpha and Beta workstreams run day to day.\n\n## Review\n\nEvery change is reviewed by one person who did not write it. A review that\nfinds nothing is still recorded, so the trail is complete either way.\n\n## Releases\n\nReleases go out on Thursdays. A release note names the change, the reviewer\nand the rollback step. See [[release-process]] and [[review-policy]].\n",
+    "sha256": "a2cc9d30a5b60dd5573321615eb4e0c16595b0316d504da562631f11b7f0619d"
+  }
+}

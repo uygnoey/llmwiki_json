@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "id": "page:release-process",
+  "slug": "release-process",
+  "title": "Release Process",
+  "type": "concept",
+  "created": "2026-08-21",
+  "updated": "2026-08-21",
+  "tags": [
+    "release",
+    "schedule"
+  ],
+  "projects": [],
+  "sources": [],
+  "raw_ref": "raw/demo/release-process.md",
+  "summary": "Demo page for the framework.",
+  "blocks": {
+    "block:release-process:e0539f45ad9cce20:1": {
+      "id": "block:release-process:e0539f45ad9cce20:1",
+      "kind": "heading",
+      "data": {
+        "level": 1,
+        "text": "Release Process"
+      },
+      "refs": [],
+      "source_text": "# Release Process",
+      "fingerprint": "e0539f45ad9cce20"
+    },
+    "block:release-process:9bd18c65d166bd53:1": {
+      "id": "block:release-process:9bd18c65d166bd53:1",
+      "kind": "paragraph",
+      "data": {
+        "text": "Thursday releases. Each note carries the change, the reviewer, and how to roll\nit back. [[review-policy]] decides whether the change is ready at all."
+      },
+      "refs": [
+        "review-policy"
+      ],
+      "source_text": "Thursday releases. Each note carries the change, the reviewer, and how to roll\nit back. [[review-policy]] decides whether the change is ready at all.",
+      "fingerprint": "9bd18c65d166bd53"
+    }
+  },
+  "block_order": [
+    "block:release-process:e0539f45ad9cce20:1",
+    "block:release-process:9bd18c65d166bd53:1"
+  ],
+  "links": [
+    {
+      "target": "review-policy",
+      "label": "review-policy",
+      "anchor": "",
+      "kind": "wiki",
+      "block_id": "block:release-process:9bd18c65d166bd53:1"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-08-21",
+      "action": "ingested",
+      "actor": "llmwiki-cli",
+      "note": "raw/demo/release-process.md"
+    }
+  ],
+  "source_snapshot": {
+    "format": "markdown",
+    "text": "---\ntype: concept\ntags: [release, schedule]\n---\n# Release Process\n\nThursday releases. Each note carries the change, the reviewer, and how to roll\nit back. [[review-policy]] decides whether the change is ready at all.\n",
+    "sha256": "29c41998104a3f4b57bbfcc63c9e694f0582fab21674a9c4702c4719c49d4513"
+  }
+}

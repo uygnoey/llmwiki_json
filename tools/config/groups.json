@@ -1,0 +1,20 @@
+{
+  "project": {
+    "alpha": {"label": "Alpha", "color": "#ff8a78", "match": ["alpha-platform", "alpha"]},
+    "beta": {"label": "Beta", "color": "#5fd8ff", "match": ["beta", "beta-search", "beta-catalog"]},
+    "common": {"label": "공통", "color": "#b79cff", "match": ["공통"]},
+    "multi": {"label": "다중 프로젝트", "color": "#ffd66b", "match": []},
+    "ungrouped": {"label": "미분류", "color": "#8797ad", "match": []}
+  },
+  "type": {
+    "source": "#67b7ff",
+    "entity": "#45e3b2",
+    "concept": "#b79cff",
+    "synthesis": "#ff7fa5",
+    "project": "#ffd66b",
+    "home": "#f8fafc",
+    "index": "#94a3b8",
+    "log": "#64748b"
+  },
+  "tag_palette": ["#56e1f2", "#91a7ff", "#c69cff", "#ff8dca", "#ff8695", "#ffa56d", "#ffe275", "#65e79c", "#4de2c7", "#66c8ff"]
+}

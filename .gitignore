@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.DS_Store
+__pycache__/
+*.pyc
+.pytest_cache/
+viewer/public/data/
+index/*.json
+index/markdown/
+!index/.gitkeep
+
+# raw/ 는 폴더 구조만 커밋하고 내용물(심링크·원본 소스)은 무시한다
+raw/*
+!raw/README.md
+!raw/assets/
+raw/assets/*
+!raw/assets/.gitkeep
+# the demo sources are part of the framework: they show what an input looks
+# like, and wiki/ is what they turn into
+!raw/demo/
+!raw/demo/**

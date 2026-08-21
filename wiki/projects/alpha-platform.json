@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "id": "page:alpha-platform",
+  "slug": "alpha-platform",
+  "title": "Alpha Platform",
+  "type": "project",
+  "created": "2026-08-21",
+  "updated": "2026-08-21",
+  "tags": [
+    "project"
+  ],
+  "projects": [
+    "alpha"
+  ],
+  "sources": [],
+  "raw_ref": "raw/demo/alpha-platform.md",
+  "summary": "Demo project page.",
+  "blocks": {
+    "block:alpha-platform:e9c61aa0e9065509:1": {
+      "id": "block:alpha-platform:e9c61aa0e9065509:1",
+      "kind": "heading",
+      "data": {
+        "level": 1,
+        "text": "Alpha Platform"
+      },
+      "refs": [],
+      "source_text": "# Alpha Platform",
+      "fingerprint": "e9c61aa0e9065509"
+    },
+    "block:alpha-platform:67c1f040e4fc97b8:1": {
+      "id": "block:alpha-platform:67c1f040e4fc97b8:1",
+      "kind": "paragraph",
+      "data": {
+        "text": "The first workstream. Collects records from upstream systems and normalises\nthem into one shape. Depends on [[review-policy]] for every schema change."
+      },
+      "refs": [
+        "review-policy"
+      ],
+      "source_text": "The first workstream. Collects records from upstream systems and normalises\nthem into one shape. Depends on [[review-policy]] for every schema change.",
+      "fingerprint": "67c1f040e4fc97b8"
+    }
+  },
+  "block_order": [
+    "block:alpha-platform:e9c61aa0e9065509:1",
+    "block:alpha-platform:67c1f040e4fc97b8:1"
+  ],
+  "links": [
+    {
+      "target": "review-policy",
+      "label": "review-policy",
+      "anchor": "",
+      "kind": "wiki",
+      "block_id": "block:alpha-platform:67c1f040e4fc97b8:1"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-08-21",
+      "action": "ingested",
+      "actor": "llmwiki-cli",
+      "note": "raw/demo/alpha-platform.md"
+    }
+  ],
+  "source_snapshot": {
+    "format": "markdown",
+    "text": "---\ntype: project\ntags: [project]\n---\n# Alpha Platform\n\nThe first workstream. Collects records from upstream systems and normalises\nthem into one shape. Depends on [[review-policy]] for every schema change.\n",
+    "sha256": "5c60da7c86364110c70b8350d8d38d2d01db5ac46b4fb89ec1b95ab025573617"
+  }
+}

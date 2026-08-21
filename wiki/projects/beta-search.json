@@ -1,0 +1,77 @@
+{
+  "schema_version": "1.0",
+  "id": "page:beta-search",
+  "slug": "beta-search",
+  "title": "Beta Search",
+  "type": "project",
+  "created": "2026-08-21",
+  "updated": "2026-08-21",
+  "tags": [
+    "project"
+  ],
+  "projects": [
+    "beta"
+  ],
+  "sources": [],
+  "raw_ref": "raw/demo/beta-search.md",
+  "summary": "Demo project page.",
+  "blocks": {
+    "block:beta-search:ce8cbe3bbbd216a9:1": {
+      "id": "block:beta-search:ce8cbe3bbbd216a9:1",
+      "kind": "heading",
+      "data": {
+        "level": 1,
+        "text": "Beta Search"
+      },
+      "refs": [],
+      "source_text": "# Beta Search",
+      "fingerprint": "ce8cbe3bbbd216a9"
+    },
+    "block:beta-search:e21b58deb60c8916:1": {
+      "id": "block:beta-search:e21b58deb60c8916:1",
+      "kind": "paragraph",
+      "data": {
+        "text": "The second workstream. Answers a query by resolving it to a concept first and\nthen finding what is attached to that concept, rather than matching strings.\nShares [[release-process]] with [[alpha-platform]]."
+      },
+      "refs": [
+        "alpha-platform",
+        "release-process"
+      ],
+      "source_text": "The second workstream. Answers a query by resolving it to a concept first and\nthen finding what is attached to that concept, rather than matching strings.\nShares [[release-process]] with [[alpha-platform]].",
+      "fingerprint": "e21b58deb60c8916"
+    }
+  },
+  "block_order": [
+    "block:beta-search:ce8cbe3bbbd216a9:1",
+    "block:beta-search:e21b58deb60c8916:1"
+  ],
+  "links": [
+    {
+      "target": "release-process",
+      "label": "release-process",
+      "anchor": "",
+      "kind": "wiki",
+      "block_id": "block:beta-search:e21b58deb60c8916:1"
+    },
+    {
+      "target": "alpha-platform",
+      "label": "alpha-platform",
+      "anchor": "",
+      "kind": "wiki",
+      "block_id": "block:beta-search:e21b58deb60c8916:1"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-08-21",
+      "action": "ingested",
+      "actor": "llmwiki-cli",
+      "note": "raw/demo/beta-search.md"
+    }
+  ],
+  "source_snapshot": {
+    "format": "markdown",
+    "text": "---\ntype: project\ntags: [project]\n---\n# Beta Search\n\nThe second workstream. Answers a query by resolving it to a concept first and\nthen finding what is attached to that concept, rather than matching strings.\nShares [[release-process]] with [[alpha-platform]].\n",
+    "sha256": "ba428cb330ee6aab317f16aee2667fd1b02ccc4b518ea09bdedb3f512147610b"
+  }
+}

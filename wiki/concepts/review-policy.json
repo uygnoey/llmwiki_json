@@ -1,0 +1,79 @@
+{
+  "schema_version": "1.0",
+  "id": "page:review-policy",
+  "slug": "review-policy",
+  "title": "Review Policy",
+  "type": "concept",
+  "created": "2026-08-21",
+  "updated": "2026-08-21",
+  "tags": [
+    "review",
+    "policy"
+  ],
+  "projects": [],
+  "sources": [],
+  "raw_ref": "raw/demo/review-policy.md",
+  "summary": "Demo page for the framework.",
+  "blocks": {
+    "block:review-policy:f8a98bb434fce659:1": {
+      "id": "block:review-policy:f8a98bb434fce659:1",
+      "kind": "heading",
+      "data": {
+        "level": 1,
+        "text": "Review Policy"
+      },
+      "refs": [],
+      "source_text": "# Review Policy",
+      "fingerprint": "f8a98bb434fce659"
+    },
+    "block:review-policy:4e11f344a8fed909:1": {
+      "id": "block:review-policy:4e11f344a8fed909:1",
+      "kind": "paragraph",
+      "data": {
+        "text": "One reviewer, and never the author. The reviewer records an outcome even when\nnothing needed changing, because an empty result and an unread change look\nidentical afterwards otherwise."
+      },
+      "refs": [],
+      "source_text": "One reviewer, and never the author. The reviewer records an outcome even when\nnothing needed changing, because an empty result and an unread change look\nidentical afterwards otherwise.",
+      "fingerprint": "4e11f344a8fed909"
+    },
+    "block:review-policy:7c14e2ad167dc1d0:1": {
+      "id": "block:review-policy:7c14e2ad167dc1d0:1",
+      "kind": "paragraph",
+      "data": {
+        "text": "Escalation goes to [[release-process]] when a change cannot ship on schedule."
+      },
+      "refs": [
+        "release-process"
+      ],
+      "source_text": "Escalation goes to [[release-process]] when a change cannot ship on schedule.",
+      "fingerprint": "7c14e2ad167dc1d0"
+    }
+  },
+  "block_order": [
+    "block:review-policy:f8a98bb434fce659:1",
+    "block:review-policy:4e11f344a8fed909:1",
+    "block:review-policy:7c14e2ad167dc1d0:1"
+  ],
+  "links": [
+    {
+      "target": "release-process",
+      "label": "release-process",
+      "anchor": "",
+      "kind": "wiki",
+      "block_id": "block:review-policy:7c14e2ad167dc1d0:1"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-08-21",
+      "action": "ingested",
+      "actor": "llmwiki-cli",
+      "note": "raw/demo/review-policy.md"
+    }
+  ],
+  "source_snapshot": {
+    "format": "markdown",
+    "text": "---\ntype: concept\ntags: [review, policy]\n---\n# Review Policy\n\nOne reviewer, and never the author. The reviewer records an outcome even when\nnothing needed changing, because an empty result and an unread change look\nidentical afterwards otherwise.\n\nEscalation goes to [[release-process]] when a change cannot ship on schedule.\n",
+    "sha256": "d341a94e1e88594ddf6229399140fde107490724e188416d82e6eec056011a2c"
+  }
+}

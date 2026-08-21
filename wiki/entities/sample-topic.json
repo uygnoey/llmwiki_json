@@ -1,0 +1,90 @@
+{
+  "schema_version": "1.0",
+  "id": "page:sample-topic",
+  "slug": "sample-topic",
+  "title": "Sample Topic",
+  "type": "entity",
+  "created": "2026-08-21",
+  "updated": "2026-08-21",
+  "tags": [
+    "example"
+  ],
+  "projects": [],
+  "sources": [],
+  "raw_ref": "raw/demo/sample-topic.md",
+  "summary": "Demo page for the framework.",
+  "blocks": {
+    "block:sample-topic:5828861393e20db8:1": {
+      "id": "block:sample-topic:5828861393e20db8:1",
+      "kind": "heading",
+      "data": {
+        "level": 1,
+        "text": "Sample Topic"
+      },
+      "refs": [],
+      "source_text": "# Sample Topic",
+      "fingerprint": "5828861393e20db8"
+    },
+    "block:sample-topic:72af350c84a7ce04:1": {
+      "id": "block:sample-topic:72af350c84a7ce04:1",
+      "kind": "paragraph",
+      "data": {
+        "text": "An entity that exists to show what a page looks like once it has links, a\nsummary and a couple of sections. It is referenced by [[team-handbook]]."
+      },
+      "refs": [
+        "team-handbook"
+      ],
+      "source_text": "An entity that exists to show what a page looks like once it has links, a\nsummary and a couple of sections. It is referenced by [[team-handbook]].",
+      "fingerprint": "72af350c84a7ce04"
+    },
+    "block:sample-topic:2ce9f9a6c71fbace:1": {
+      "id": "block:sample-topic:2ce9f9a6c71fbace:1",
+      "kind": "heading",
+      "data": {
+        "level": 2,
+        "text": "Notes"
+      },
+      "refs": [],
+      "source_text": "## Notes",
+      "fingerprint": "2ce9f9a6c71fbace"
+    },
+    "block:sample-topic:cf58c7461bbafdda:1": {
+      "id": "block:sample-topic:cf58c7461bbafdda:1",
+      "kind": "paragraph",
+      "data": {
+        "text": "Nothing here is real. Replace this directory with your own sources."
+      },
+      "refs": [],
+      "source_text": "Nothing here is real. Replace this directory with your own sources.",
+      "fingerprint": "cf58c7461bbafdda"
+    }
+  },
+  "block_order": [
+    "block:sample-topic:5828861393e20db8:1",
+    "block:sample-topic:72af350c84a7ce04:1",
+    "block:sample-topic:2ce9f9a6c71fbace:1",
+    "block:sample-topic:cf58c7461bbafdda:1"
+  ],
+  "links": [
+    {
+      "target": "team-handbook",
+      "label": "team-handbook",
+      "anchor": "",
+      "kind": "wiki",
+      "block_id": "block:sample-topic:72af350c84a7ce04:1"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-08-21",
+      "action": "ingested",
+      "actor": "llmwiki-cli",
+      "note": "raw/demo/sample-topic.md"
+    }
+  ],
+  "source_snapshot": {
+    "format": "markdown",
+    "text": "---\ntype: entity\ntags: [example]\n---\n# Sample Topic\n\nAn entity that exists to show what a page looks like once it has links, a\nsummary and a couple of sections. It is referenced by [[team-handbook]].\n\n## Notes\n\nNothing here is real. Replace this directory with your own sources.\n",
+    "sha256": "d5e7d868f824a05bfe8d498d8ea76b94cfed537b09ba570178cf6c15796cfb3a"
+  }
+}

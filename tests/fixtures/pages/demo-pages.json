@@ -1,0 +1,51 @@
+[
+  {
+    "schema_version":"1.0","id":"page:alpha","slug":"alpha","title":"Alpha — Alpha platform","type":"project","created":"2026-08-19","updated":"2026-08-19",
+    "tags":["project","cdw-cdisc","정규화"],"projects":["alpha-platform"],"sources":[],"raw_ref":null,
+    "summary":"샘플 원본 데이터 입수부터 AlphaStd Export까지 이어지는 정규화 프로젝트 허브.",
+    "blocks":{"block:alpha:h1":{"id":"block:alpha:h1","kind":"heading","data":{"level":1,"text":"Alpha — Alpha platform"},"refs":[],"source_text":"# Alpha — Alpha platform","fingerprint":"demo-alpha-h1"},"block:alpha:p1":{"id":"block:alpha:p1","kind":"paragraph","data":{"text":"[[terminology-mapping]]과 [[review-queue]]를 중심으로 정규화 흐름을 구성한다."},"refs":["terminology-mapping","review-queue"],"source_text":"[[terminology-mapping]]과 [[review-queue]]를 중심으로 정규화 흐름을 구성한다.","fingerprint":"demo-alpha-p1"}},
+    "block_order":["block:alpha:h1","block:alpha:p1"],"links":[{"target":"terminology-mapping","kind":"wiki","block_id":"block:alpha:p1"},{"target":"review-queue","kind":"wiki","block_id":"block:alpha:p1"}],"history":[{"at":"2026-08-19","action":"created","actor":"system","note":"demo fixture"}]
+  },
+  {
+    "schema_version":"1.0","id":"page:beta","slug":"beta","title":"Beta — RefModel Search Engine","type":"project","created":"2026-08-19","updated":"2026-08-19",
+    "tags":["project","Beta","검색"],"projects":["beta"],"sources":[],"raw_ref":null,
+    "summary":"샘플개념과 샘플항목 개념을 통합 검색하는 프로젝트 허브.",
+    "blocks":{"block:beta:h1":{"id":"block:beta:h1","kind":"heading","data":{"level":1,"text":"Beta — RefModel Search Engine"},"refs":[],"source_text":"# Beta — RefModel Search Engine","fingerprint":"demo-beta-h1"},"block:beta:p1":{"id":"block:beta:p1","kind":"paragraph","data":{"text":"[[sample-topic]]와 [[omop-vocabulary]]를 사용한다."},"refs":["sample-topic","omop-vocabulary"],"source_text":"[[sample-topic]]와 [[omop-vocabulary]]를 사용한다.","fingerprint":"demo-beta-p1"}},
+    "block_order":["block:beta:h1","block:beta:p1"],"links":[{"target":"sample-topic","kind":"wiki","block_id":"block:beta:p1"},{"target":"omop-vocabulary","kind":"wiki","block_id":"block:beta:p1"}],"history":[{"at":"2026-08-19","action":"created","actor":"system","note":"demo fixture"}]
+  },
+  {
+    "schema_version":"1.0","id":"page:terminology-mapping","slug":"terminology-mapping","title":"Terminology Mapping","type":"concept","created":"2026-08-19","updated":"2026-08-19",
+    "tags":["용어체계","mapping","정규화"],"projects":["alpha-platform"],"sources":["source:demo-alpha"],"raw_ref":null,
+    "summary":"원천 용어를 표준 개념과 연결하고 검수 이력을 보존하는 흐름.",
+    "blocks":{"block:tm:h1":{"id":"block:tm:h1","kind":"heading","data":{"level":1,"text":"Terminology Mapping"},"refs":[],"source_text":"# Terminology Mapping","fingerprint":"demo-tm-h1"},"block:tm:p1":{"id":"block:tm:p1","kind":"paragraph","data":{"text":"후보는 [[omop-vocabulary]]에서 찾고 [[review-queue]]에서 승인한다."},"refs":["omop-vocabulary","review-queue"],"source_text":"후보는 [[omop-vocabulary]]에서 찾고 [[review-queue]]에서 승인한다.","fingerprint":"demo-tm-p1"}},
+    "block_order":["block:tm:h1","block:tm:p1"],"links":[{"target":"omop-vocabulary","kind":"wiki","block_id":"block:tm:p1"},{"target":"review-queue","kind":"wiki","block_id":"block:tm:p1"}],"history":[{"at":"2026-08-19","action":"created","actor":"system","note":"demo fixture"}]
+  },
+  {
+    "schema_version":"1.0","id":"page:sample-topic","slug":"sample-topic","title":"Sample Topic","type":"concept","created":"2026-08-19","updated":"2026-08-19",
+    "tags":["검색","랭킹","샘플개념-검색"],"projects":["beta","alpha-platform"],"sources":["source:demo-beta"],"raw_ref":null,
+    "summary":"여러 매칭 유형의 우선순위를 명시적으로 정렬하는 등급 체계.",
+    "blocks":{"block:mt:h1":{"id":"block:mt:h1","kind":"heading","data":{"level":1,"text":"Sample Topic"},"refs":[],"source_text":"# Sample Topic","fingerprint":"demo-mt-h1"},"block:mt:c1":{"id":"block:mt:c1","kind":"conflict","data":{"text":"문서마다 tier 번호 배열이 다르다.","claims":["전체판 기준","MVP 기준"]},"refs":["beta"],"source_text":"> ⚠️ 상충: 문서마다 tier 번호 배열이 다르다.","fingerprint":"demo-mt-c1","resolution":{"status":"unresolved"}}},
+    "block_order":["block:mt:h1","block:mt:c1"],"links":[{"target":"beta","kind":"wiki","block_id":"block:mt:c1"}],"history":[{"at":"2026-08-19","action":"created","actor":"system","note":"demo fixture"}]
+  },
+  {
+    "schema_version":"1.0","id":"page:omop-vocabulary","slug":"omop-vocabulary","title":"Reference Vocabulary","type":"concept","created":"2026-08-19","updated":"2026-08-19",
+    "tags":["RefModel","용어체계","공통"],"projects":["공통"],"sources":[],"raw_ref":null,
+    "summary":"샘플개념·샘플항목·검사 표준 개념과 관계를 제공하는 공통 어휘 계층.",
+    "blocks":{"block:ov:h1":{"id":"block:ov:h1","kind":"heading","data":{"level":1,"text":"Reference Vocabulary"},"refs":[],"source_text":"# Reference Vocabulary","fingerprint":"demo-ov-h1"},"block:ov:p1":{"id":"block:ov:p1","kind":"paragraph","data":{"text":"[[terminology-mapping]]과 [[sample-topic]]가 공유한다."},"refs":["terminology-mapping","sample-topic"],"source_text":"[[terminology-mapping]]과 [[sample-topic]]가 공유한다.","fingerprint":"demo-ov-p1"}},
+    "block_order":["block:ov:h1","block:ov:p1"],"links":[{"target":"terminology-mapping","kind":"wiki","block_id":"block:ov:p1"},{"target":"sample-topic","kind":"wiki","block_id":"block:ov:p1"}],"history":[{"at":"2026-08-19","action":"created","actor":"system","note":"demo fixture"}]
+  },
+  {
+    "schema_version":"1.0","id":"page:review-queue","slug":"review-queue","title":"Review Queue","type":"concept","created":"2026-08-19","updated":"2026-08-19",
+    "tags":["검수","workflow","정규화"],"projects":["alpha-platform"],"sources":[],"raw_ref":null,
+    "summary":"매핑 후보 승인·반려와 근거·검수자·시각을 보존하는 대기열.",
+    "blocks":{"block:rq:h1":{"id":"block:rq:h1","kind":"heading","data":{"level":1,"text":"Review Queue"},"refs":[],"source_text":"# Review Queue","fingerprint":"demo-rq-h1"},"block:rq:p1":{"id":"block:rq:p1","kind":"paragraph","data":{"text":"[[terminology-mapping]] 결과를 검수한다."},"refs":["terminology-mapping"],"source_text":"[[terminology-mapping]] 결과를 검수한다.","fingerprint":"demo-rq-p1"}},
+    "block_order":["block:rq:h1","block:rq:p1"],"links":[{"target":"terminology-mapping","kind":"wiki","block_id":"block:rq:p1"}],"history":[{"at":"2026-08-19","action":"created","actor":"system","note":"demo fixture"}]
+  },
+  {
+    "schema_version":"1.0","id":"page:knowledge-integrity","slug":"knowledge-integrity","title":"Knowledge Integrity","type":"synthesis","created":"2026-08-19","updated":"2026-08-19",
+    "tags":["공통","lint","품질"],"projects":["공통"],"sources":[],"raw_ref":null,
+    "summary":"링크·상충·출처·고아 페이지를 지속적으로 검사하는 공통 품질 원칙.",
+    "blocks":{"block:ki:h1":{"id":"block:ki:h1","kind":"heading","data":{"level":1,"text":"Knowledge Integrity"},"refs":[],"source_text":"# Knowledge Integrity","fingerprint":"demo-ki-h1"},"block:ki:p1":{"id":"block:ki:p1","kind":"paragraph","data":{"text":"[[alpha]]와 [[beta]]의 index/map 불변식을 검사한다."},"refs":["alpha","beta"],"source_text":"[[alpha]]와 [[beta]]의 index/map 불변식을 검사한다.","fingerprint":"demo-ki-p1"}},
+    "block_order":["block:ki:h1","block:ki:p1"],"links":[{"target":"alpha","kind":"wiki","block_id":"block:ki:p1"},{"target":"beta","kind":"wiki","block_id":"block:ki:p1"}],"history":[{"at":"2026-08-19","action":"created","actor":"system","note":"demo fixture"}]
+  }
+]

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1a1b1f" />
+    <title>llmwiki_json · Graph</title>
+    <script>
+      /* 첫 페인트 전에 테마를 확정해 밝기 깜빡임을 없앤다. "system"은 속성을 남기지 않는다. */
+      (function () {
+        try {
+          var choice = localStorage.getItem("llmwiki:theme");
+          if (choice === "light" || choice === "dark") document.documentElement.dataset.theme = choice;
+        } catch (error) {
+          /* 저장소를 못 읽으면 시스템 설정을 따른다 */
+        }
+      })();
+    </script>
+  </head>
+  <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
+</html>
+

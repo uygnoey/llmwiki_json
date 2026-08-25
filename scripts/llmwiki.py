@@ -681,6 +681,10 @@ def project(ws: Workspace) -> dict[str, Any]:
 def build(ws: Workspace) -> dict[str, int]:
     payloads = project(ws)
     pages = ws.load_pages()
+    # 뷰어가 폴링으로 갱신을 감지하는 값. 산출물이 실제로 달라질 때만 바뀐다.
+    payloads["revision.json"] = {"schema_version": "1.0", "revision": sha(
+        "".join(canonical(payloads[name]) for name in sorted(payloads))
+        + "".join(canonical(page) for page in pages))}
     for name, data in payloads.items():
         dump(ws.index / name, data, pretty=True)
         dump(ws.public / name, data)

@@ -1,0 +1,26 @@
+services:
+  viewer:
+    build:
+      context: ..
+      dockerfile: viewer/Dockerfile
+      target: viewer
+    image: llmwiki-json-viewer:latest
+    container_name: llmwiki-json-viewer
+    restart: unless-stopped
+    ports:
+      - "4173:80"
+    volumes:
+      # 이미지에 구운 데이터 대신 호스트의 산출물을 그대로 본다.
+      # watcher 가 이 디렉터리를 갱신하면 뷰어가 새로고침 없이 따라온다.
+      - ../viewer/public/data:/usr/share/nginx/html/data:ro
+
+  watcher:
+    build:
+      context: ..
+      dockerfile: viewer/Dockerfile
+      target: watcher
+    image: llmwiki-json-watcher:latest
+    container_name: llmwiki-json-watcher
+    restart: unless-stopped
+    volumes:
+      - ..:/repo

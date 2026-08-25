@@ -15,6 +15,14 @@ const EMPTY: GraphPayload = {schema_version:"1.0",nodes:[],edges:[],groups:{proj
 const DEFAULT_GRAPH_SETTINGS: GraphSettings = {nodeScale:0.5,linkThickness:0.15,centerForce:.52,repelForce:10,linkStrength:1,linkDistance:250};
 /** Data failures surface in development only — production ships no console output. */
 const reportDataError=(error:unknown)=>{if(import.meta.env.DEV)console.error("[llmwiki] data load failed",error)};
+/** 갱신 확인 주기. revision.json 은 수십 바이트라 짧게 잡아도 부담이 없다. */
+const DATA_POLL_MS=3000;
+/** 산출물 개정 값. build 가 없거나 옛 배포라 파일이 없으면 null 을 돌려주고 폴링은 조용히 지나간다. */
+const fetchRevision=async():Promise<string|null>=>{
+  const response=await fetch(`/data/revision.json?v=${Date.now()}`,{cache:"no-store"});
+  if(!response.ok)return null;
+  return (await response.json() as {revision?:string}).revision??null;
+};
 
 interface ToolButtonProps {
   label: string;
@@ -45,21 +53,30 @@ export default function App() {
   const graphRef=useRef<GraphCanvasHandle>(null);
   const deferredGraphSettings=useDeferredValue(graphSettings);
 
+  const revisionRef=useRef<string|null>(null);
   const loadData=useCallback(async()=>{
     const version=Date.now();
-    const [graph,nextStats]=await Promise.all([
+    const [graph,nextStats,revision]=await Promise.all([
       fetch(`/data/graph.json?v=${version}`,{cache:"no-store"}).then(r=>{if(!r.ok)throw new Error(`graph ${r.status}`);return r.json()}),
       fetch(`/data/stats.json?v=${version}`,{cache:"no-store"}).then(r=>{if(!r.ok)throw new Error(`stats ${r.status}`);return r.json()}),
+      fetchRevision(),
     ]);
+    revisionRef.current=revision;
     setData(graph);setStats(nextStats);
   },[]);
   useEffect(()=>{
     void loadData().catch(reportDataError);
-    if(import.meta.hot){
-      const refresh=()=>void loadData().catch(reportDataError);
-      import.meta.hot.on("llmwiki:data",refresh);
-      return()=>import.meta.hot?.off("llmwiki:data",refresh);
-    }
+    /* 개발 서버는 HMR 로 즉시 통지하고, 그 밖(정적 배포·LAN 접속)에서는 revision 을 폴링한다.
+       revision 은 산출물이 실제로 달라질 때만 바뀌므로 값이 같으면 다시 그리지 않는다. */
+    const hot=import.meta.hot;
+    const refresh=()=>void loadData().catch(reportDataError);
+    hot?.on("llmwiki:data",refresh);
+    const timer=setInterval(()=>{
+      void fetchRevision().then(next=>{
+        if(next&&next!==revisionRef.current)refresh();
+      }).catch(reportDataError);
+    },DATA_POLL_MS);
+    return()=>{clearInterval(timer);hot?.off("llmwiki:data",refresh)};
   },[loadData]);
   useEffect(()=>{
     const groups=colorBy==="project"?Object.keys(data.groups.project):colorBy==="type"?[...new Set(data.nodes.map(n=>n.type))]:[...new Set(data.nodes.flatMap(n=>n.tags.length?n.tags:["untagged"]))];

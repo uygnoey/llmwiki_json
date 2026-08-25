@@ -13,7 +13,8 @@
     "validate": "cd .. && python3 scripts/llmwiki.py validate --fixtures",
     "lint": "cd .. && python3 scripts/llmwiki.py lint --fixtures",
     "test": "cd .. && python3 -m unittest discover -s tests -v && cd viewer && bun run typecheck",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "watch:data": "bun run scripts/watch-data.ts"
   },
   "dependencies": {
     "@react-sigma/core": "^5.0.6",

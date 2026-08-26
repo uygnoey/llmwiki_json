@@ -96,7 +96,8 @@ class DeterminismTest(WorkspaceCase):
         after = {p.name: p.read_bytes() for p in sorted((self.root / "index").glob("*.json"))}
         self.assertEqual(before, after)
         self.assertEqual(sorted(before), ["catalog.json", "graph.json", "map.json",
-                                          "routes.json", "search.json", "stats.json"])
+                                          "revision.json", "routes.json", "search.json",
+                                          "stats.json"])
 
     def test_layout_coordinates_are_rounded_and_stable(self) -> None:
         self.write_demo()
@@ -153,3 +154,73 @@ class BuildOutputTest(WorkspaceCase):
         self.write_pages([page])
         with self.assertRaisesRegex(llmwiki.WikiError, "invalid type"):
             llmwiki.project(self.ws)
+
+
+class LinkResolutionTest(WorkspaceCase):
+    """[[링크]]가 표기 하나 다르다고 선이 사라지면 안 된다."""
+
+    def graph(self) -> dict:
+        return llmwiki.project(self.ws)["graph.json"]
+
+    def edges(self) -> set[tuple[str, str]]:
+        return {(edge["source"], edge["target"]) for edge in self.graph()["edges"]}
+
+    def test_title_and_casing_variants_resolve_to_the_same_page(self) -> None:
+        self.write_pages([
+            make_page("alpha-platform", "# Alpha Platform\n\n첫 워크스트림.\n"),
+            make_page("note", "# Note\n\n[[Alpha Platform]] 과 [[ALPHA_PLATFORM]] 과 [[page:alpha-platform]].\n"),
+        ])
+        self.assertEqual(self.edges(), {("page:note", "page:alpha-platform")})
+
+    def test_source_reference_draws_an_edge(self) -> None:
+        self.write_pages([make_page("handbook", "# Handbook\n\n원본.\n"),
+                          make_page("note", "# Note\n\n본문.\n", sources=["source:handbook"])])
+        self.assertEqual(self.edges(), {("page:note", "page:handbook")})
+
+    def test_source_reference_outside_the_wiki_is_ignored(self) -> None:
+        self.write_pages([make_page("note", "# Note\n\n본문.\n",
+                                    sources=["user:2026-08-19", "raw:notes.md"])])
+        self.assertEqual(self.edges(), set())
+
+    def test_block_wikilink_without_a_links_entry_still_draws_an_edge(self) -> None:
+        alpha = make_page("alpha", "# Alpha\n\n[[beta]] 참조.\n")
+        alpha["links"] = []  # 손으로 쓴 JSON page 가 흔히 빠뜨리는 배열
+        self.write_pages([alpha, make_page("beta", "# Beta\n\n본문.\n")])
+        self.assertEqual(self.edges(), {("page:alpha", "page:beta")})
+
+    def test_a_page_linked_and_cited_gets_one_edge(self) -> None:
+        self.write_pages([make_page("handbook", "# Handbook\n\n원본.\n"),
+                          make_page("note", "# Note\n\n[[handbook]] 참조.\n",
+                                    sources=["page:handbook"])])
+        self.assertEqual(len(self.graph()["edges"]), 1)
+
+    def test_self_links_are_not_edges(self) -> None:
+        self.write_pages([make_page("alpha", "# Alpha\n\n[[alpha]] 자기 자신.\n")])
+        nodes = {node["id"]: node for node in self.graph()["nodes"]}
+        self.assertEqual(self.edges(), set())
+        self.assertTrue(nodes["page:alpha"]["orphan"])
+
+
+class ProjectGroupTest(WorkspaceCase):
+    """groups.json 이 모르는 프로젝트도 자기 그룹을 가진다 — 전부 '미분류'로 뭉치면 안 된다."""
+
+    def test_unknown_project_gets_its_own_group_and_route(self) -> None:
+        self.write_pages([make_page("note", "# Note\n\n본문.\n", projects=["OSE"])])
+        payloads = llmwiki.project(self.ws)
+        node = payloads["graph.json"]["nodes"][0]
+        self.assertEqual(node["group"], "ose")
+        group = payloads["graph.json"]["groups"]["project"]["ose"]
+        self.assertEqual(group["label"], "OSE")
+        self.assertEqual(group["match"], ["OSE"])
+        self.assertEqual(payloads["routes.json"]["ose"], ["page:note"])
+
+    def test_derived_groups_do_not_touch_the_config_file(self) -> None:
+        self.write_pages([make_page("note", "# Note\n\n본문.\n", projects=["OSE"])])
+        before = self.ws.groups_path.read_bytes()
+        llmwiki.build(self.ws)
+        self.assertEqual(self.ws.groups_path.read_bytes(), before)
+
+    def test_reserved_groups_stay_last(self) -> None:
+        self.write_pages([make_page("note", "# Note\n\n본문.\n", projects=["OSE"])])
+        keys = list(llmwiki.project(self.ws)["graph.json"]["groups"]["project"])
+        self.assertEqual(keys[-2:], ["multi", "ungrouped"])

@@ -25,6 +25,8 @@ Karpathy의 LLM Wiki 패턴을 따른다. raw source를 매 질문마다 다시 
 
 - 모든 page와 block은 영속 ID를 가진다. 배열 위치를 ID로 사용하지 않는다.
 - 주장은 `sources`로 근거를 연결한다. 사용자 전달 사실은 `user:YYYY-MM-DD` source ref를 쓴다.
+- `sources`·`supersedes`·`related`와 본문 `[[위키링크]]`는 모두 그래프 선이 된다. 링크 대상은 slug·id·제목 중 무엇으로 써도 해석되지만, 정본에는 slug로 적는다.
+- `projects`와 `tags`는 비워 두지 않는다. 프로젝트 그룹과 태그 색상이 여기서만 나온다. `tools/config/groups.json`에 없는 프로젝트는 ingest가 등록한다.
 - 상충은 `conflict` block과 `resolution.status`로 명시한다. 미판정이면 양쪽을 병기한다.
 - 새 소스가 주장을 뒤집어도 삭제하지 않고 history와 supersedes 관계를 남긴다.
 - 보안정보는 저장하지 않고 `(접속 정보 생략)`으로 치환한다.

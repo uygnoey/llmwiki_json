@@ -206,3 +206,36 @@ class LintTest(WorkspaceCase):
         snapshot = {p: p.read_bytes() for p in sorted(self.root.rglob("*.json"))}
         llmwiki.lint(self.ws)
         self.assertEqual({p: p.read_bytes() for p in sorted(self.root.rglob("*.json"))}, snapshot)
+
+
+class LinkToleranceLintTest(WorkspaceCase):
+    def build_and_lint(self) -> tuple[list[str], list[str]]:
+        llmwiki.build(self.ws)
+        return llmwiki.lint(self.ws)
+
+    def test_title_link_is_not_reported_missing(self) -> None:
+        self.write_pages([make_page("alpha-platform", "# Alpha Platform\n\n첫 워크스트림.\n"),
+                          make_page("note", "# Note\n\n[[Alpha Platform]] 참조.\n")])
+        errors, _ = self.build_and_lint()
+        self.assertEqual(only(errors, "missing link target"), [])
+
+    def test_block_link_missing_from_the_links_array_is_a_warning(self) -> None:
+        alpha = make_page("alpha", "# Alpha\n\n[[beta]] 참조.\n")
+        alpha["links"] = []
+        self.write_pages([alpha, make_page("beta", "# Beta\n\n[[alpha]] 참조.\n")])
+        errors, warnings = self.build_and_lint()
+        self.assertEqual(errors, [])
+        self.assertEqual(only(warnings, "missing from links"),
+                         ["page:alpha: block link [[beta]] missing from links"])
+
+    def test_source_reference_keeps_a_page_off_the_orphan_list(self) -> None:
+        self.write_pages([make_page("handbook", "# Handbook\n\n원본.\n"),
+                          make_page("note", "# Note\n\n본문.\n", sources=["page:handbook"])])
+        _, warnings = self.build_and_lint()
+        self.assertEqual(only(warnings, "orphan"), [])
+
+    def test_source_reference_outside_the_wiki_is_not_an_error(self) -> None:
+        self.write_pages([make_page("note", "# Note\n\n본문.\n",
+                                    sources=["user:2026-08-19", "raw:notes.md", "source:외부자료"])])
+        errors, _ = self.build_and_lint()
+        self.assertEqual(errors, [])

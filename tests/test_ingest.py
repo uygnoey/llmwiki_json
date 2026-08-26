@@ -143,3 +143,59 @@ class LogCommandTest(WorkspaceCase):
 
     def test_empty_log_reads_as_empty_list(self) -> None:
         self.assertEqual(llmwiki.read_log(self.ws), [])
+
+    def test_registers_a_new_project_group_during_ingest(self) -> None:
+        note = "---\ntype: source\ntags: [신규, 분류]\nprojects: [newlab]\n---\n# 신규 연구\n"
+        result = llmwiki.ingest(self.ws, self.write_raw("new.md", note))
+        self.assertEqual(result["registered_groups"], ["newlab"])
+        page = json.loads((self.root / result["dest"]).read_text(encoding="utf-8"))
+        self.assertEqual(page["type"], "source")
+        self.assertEqual(page["tags"], ["신규", "분류"])
+        self.assertEqual(page["projects"], ["newlab"])
+        groups = self.ws.load_groups()
+        self.assertEqual(groups["project"]["newlab"]["match"], ["newlab"])
+        self.assertEqual(llmwiki.project_group(page["projects"], groups), "newlab")
+
+
+class ClassificationTest(WorkspaceCase):
+    def test_changing_the_type_moves_the_page_to_its_new_directory(self) -> None:
+        note = "---\ntype: source\n---\n# 노트\n\n본문.\n"
+        first = llmwiki.ingest(self.ws, self.write_raw("note.md", note))
+        self.assertEqual(first["dest"], "wiki/sources/note.json")
+
+        second = llmwiki.ingest(self.ws, self.write_raw("note.md", note),
+                                page_type="entity", update=True)
+        self.assertEqual(second["dest"], "wiki/entities/note.json")
+        self.assertEqual(second["moved_from"], "wiki/sources/note.json")
+        self.assertFalse((self.root / "wiki" / "sources" / "note.json").exists())
+        page = json.loads((self.root / second["dest"]).read_text(encoding="utf-8"))
+        self.assertEqual(page["type"], "entity")
+        self.assertEqual(len(list((self.root / "wiki").rglob("note.json"))), 1)
+
+    def test_refuses_to_overwrite_a_different_page_with_the_same_filename(self) -> None:
+        other = make_page("other", "# 다른 페이지\n")
+        target = self.root / "wiki" / "concepts" / "note.json"
+        target.write_text(json.dumps(other, ensure_ascii=False), encoding="utf-8")
+        with self.assertRaisesRegex(llmwiki.WikiError, "would overwrite a different page"):
+            llmwiki.ingest(self.ws, self.write_raw("note.md", "---\ntype: concept\n---\n# 노트\n"),
+                           update=True)
+        self.assertEqual(json.loads(target.read_text(encoding="utf-8"))["id"], "page:other")
+
+    def test_refuses_to_ingest_over_a_multi_page_file(self) -> None:
+        self.write_pages([make_page("note", "# 노트\n"), make_page("other", "# 다른 노트\n")],
+                         name="note.json")
+        with self.assertRaisesRegex(llmwiki.WikiError, "several pages in one file"):
+            llmwiki.ingest(self.ws, self.write_raw("note.md", "---\ntype: concept\n---\n# 노트\n"),
+                           update=True)
+
+    def test_json_page_metadata_is_normalised(self) -> None:
+        page = make_page("json-note", "# JSON 노트\n\n본문.\n", type="entity")
+        page["tags"] = ["a", " a ", "b"]
+        page["projects"] = ["OSE", "OSE"]
+        path = self.root / "raw" / "page.json"
+        path.write_text(json.dumps(page, ensure_ascii=False), encoding="utf-8")
+        result = llmwiki.ingest(self.ws, path)
+        stored = json.loads((self.root / result["dest"]).read_text(encoding="utf-8"))
+        self.assertEqual(stored["tags"], ["a", "b"])
+        self.assertEqual(stored["projects"], ["OSE"])
+        self.assertEqual(result["registered_groups"], ["ose"])

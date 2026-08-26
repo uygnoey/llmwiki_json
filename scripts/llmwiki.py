@@ -49,6 +49,13 @@ PAGE_DIRS = {
 }
 
 WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]")
+# YAML subset used by frontmatter: `key: value`, `- item`, `[a, "b, c"]`.
+META_KEY = re.compile(r"^([^\s:#][^:]*):[ \t]*(.*)$")
+BLOCK_ITEM = re.compile(r"^[ \t]+-[ \t]*(.*)$")
+FLOW_ITEM = re.compile(r"""[ \t]*(?:"([^"]*)"|'([^']*)'|([^,]*))[ \t]*(?:,|$)""")
+# Loose link key: `[[Alpha Platform]]`, `[[alpha_platform]]` and `[[page:alpha-platform]]`
+# all have to find the page whose slug is `alpha-platform`.
+LINK_SEPARATOR = re.compile(r"[\s_]+")
 SECRET = re.compile(r"(?i)(api[_-]?key|access[_-]?token|password|passwd|secret|connection[_-]?string)"
                     r"\s*[:=]\s*[^\s,;\"']+")
 SOURCE_REF = re.compile(r"^(?:page|source|raw):\S+$|^user:\d{4}-\d{2}-\d{2}$")
@@ -60,7 +67,10 @@ CURRENT_MARK = "✅ 현행"
 
 # Deterministic radial layout. Project groups occupy adjacent angular sectors,
 # while every sector fills the same disk so the complete graph stays circular.
-GROUP_ORDER = ("alpha", "beta", "common", "multi", "ungrouped")
+RESERVED_PROJECT_GROUPS = {"multi", "ungrouped"}
+AUTO_PROJECT_COLORS = (
+    "#65e79c", "#ff8dca", "#ffa56d", "#56e1f2", "#91a7ff", "#c69cff",
+)
 GOLDEN_FRACTION = 0.6180339887498949
 LAYOUT_RADIUS = 18.0
 
@@ -198,28 +208,88 @@ def refs_in(text: str) -> list[str]:
     return sorted({norm(m.group(1)) for m in WIKILINK.finditer(text)})
 
 
+def unquote(value: str) -> str:
+    """Strip one matching pair of surrounding quotes — `"a, b"` stays one value."""
+    value = value.strip()
+    for quote in ('"', "'"):
+        if len(value) >= 2 and value.startswith(quote) and value.endswith(quote):
+            return value[1:-1].strip()
+    return value
+
+
+def split_flow(value: str) -> list[str]:
+    """`a, "b, c", 'd'` -> ['a', 'b, c', 'd'] — commas inside quotes do not split."""
+    items: list[str] = []
+    position = 0
+    while position < len(value):
+        match = FLOW_ITEM.match(value, position)
+        if not match or match.end() == position:
+            break
+        items.append(norm(next(g for g in match.groups() if g is not None)))
+        position = match.end()
+    return [item for item in items if item]
+
+
 def parse_scalar(value: str) -> Any:
     value = value.strip()
     if value.startswith("[") and value.endswith("]"):
-        return [norm(x) for x in value[1:-1].split(",") if norm(x)]
+        return split_flow(value[1:-1])
     if value in {"null", "~", ""}:
         return None
     if value.lower() in {"true", "false"}:
         return value.lower() == "true"
-    return value.strip("\"'")
+    return unquote(value)
+
+
+def string_list(value: Any) -> list[str]:
+    """Coerce a frontmatter value to a clean, de-duplicated list of strings.
+
+    `tags: [a, b]`, a block sequence, a bare `tags: a` and `tags: a, b` all
+    have to land on the same shape: the schema demands an array of unique
+    strings, and a page whose tags silently arrived as `None` is a page the
+    graph cannot colour or filter.
+    """
+    if value is None or value is False or value == "":
+        return []
+    if isinstance(value, str):
+        items: list[Any] = split_flow(value) if "," in value else [value]
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        items = [value]
+    return list(dict.fromkeys(text for text in (norm(item) for item in items) if text))
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Parse the YAML subset real notes use: scalars, flow lists, block sequences.
+
+    A block sequence (`tags:` then indented `- value` lines) is what most
+    editors and humans write. Dropping it silently used to leave `tags`,
+    `projects` and `sources` empty, so pages arrived unclassified.
+    """
     if not text.startswith("---\n"):
         return {}, text
     end = text.find("\n---\n", 4)
     if end < 0:
         return {}, text
     meta: dict[str, Any] = {}
+    key: str | None = None
     for line in text[4:end].splitlines():
-        if ":" in line and not line.startswith((" ", "\t", "-")):
-            key, value = line.split(":", 1)
-            meta[norm(key)] = parse_scalar(value)
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        item = BLOCK_ITEM.match(line)
+        if item and key is not None:
+            if not isinstance(meta.get(key), list):
+                meta[key] = []
+            value = unquote(norm(item.group(1)))
+            if value:
+                meta[key].append(value)
+            continue
+        entry = META_KEY.match(line)
+        if not entry:
+            continue
+        key = norm(entry.group(1))
+        meta[key] = parse_scalar(entry.group(2))
     return meta, text[end + 5:]
 
 
@@ -353,6 +423,88 @@ def page_links(page_id: str, blocks: dict[str, Any], order: list[str]) -> list[d
     return links
 
 
+def strip_ref_prefix(ref: str) -> tuple[str, str]:
+    """`source:handbook` -> ('source', 'handbook'); a bare value keeps an empty prefix."""
+    prefix, separator, rest = norm(ref).partition(":")
+    if not separator or not norm(rest):
+        return "", norm(ref)
+    return prefix.lower(), norm(rest)
+
+
+def reference_links(sources: Iterable[str] = (), supersedes: Iterable[str] = (),
+                    related: Iterable[str] = ()) -> list[dict[str, Any]]:
+    """Frontmatter relations become links so evidence is an edge, not just a string.
+
+    `sources: [page:x]` is how a claim points at what backs it. Until these
+    became links the graph only knew about `[[wikilinks]]`, so an ingested
+    page could sit there with no line to the source it was built from.
+    """
+    links: list[dict[str, Any]] = []
+    for kind, refs in (("source", sources), ("supersedes", supersedes), ("related", related)):
+        for ref in refs:
+            prefix, target = strip_ref_prefix(ref)
+            # user:2026-08-19 and raw:notes.md name evidence outside the wiki.
+            if prefix in {"user", "raw"} or not target:
+                continue
+            links.append({"target": target, "label": target, "kind": kind})
+    return links
+
+
+def link_key(value: str) -> str:
+    """Comparison key that ignores case, spacing and the `page:` prefix."""
+    text = norm(value).removeprefix("page:").casefold()
+    return LINK_SEPARATOR.sub("-", text).strip("-")
+
+
+def page_lookup(pages: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Resolve a link target by slug, id or title — slugs always win a tie."""
+    pages = list(pages)
+    lookup: dict[str, dict[str, Any]] = {}
+    for page in pages:
+        for value in (page.get("slug", ""), page.get("id", "")):
+            key = link_key(value)
+            if key:
+                lookup.setdefault(key, page)
+    for page in pages:
+        key = link_key(page.get("title", ""))
+        if key:
+            lookup.setdefault(key, page)
+    return lookup
+
+
+def implied_links(page: dict[str, Any]) -> list[dict[str, Any]]:
+    """Declared links plus everything the page's own content already implies.
+
+    Pages written straight to JSON often carry `[[wikilinks]]` in block text
+    without repeating them in `links`. The graph must not lose those edges
+    just because the array was hand-maintained.
+    """
+    links = [dict(link) for link in page.get("links", []) if norm(link.get("target"))]
+    seen = {(link_key(link["target"]), link.get("kind", "wiki")) for link in links}
+
+    def add(target: str, kind: str, block_id: str | None = None) -> None:
+        key = (link_key(target), kind)
+        if not key[0] or key in seen:
+            return
+        seen.add(key)
+        link = {"target": norm(target), "label": norm(target), "kind": kind}
+        if block_id:
+            link["block_id"] = block_id
+        links.append(link)
+
+    blocks = page.get("blocks") or {}
+    for bid in page.get("block_order", []):
+        block = blocks.get(bid) or {}
+        refs = block.get("refs")
+        if refs is None:
+            refs = refs_in(str(block.get("source_text", "")))
+        for ref in refs:
+            add(ref, "wiki", bid)
+    for link in reference_links(page.get("sources", [])):
+        add(link["target"], link["kind"])
+    return links
+
+
 def summary_from_blocks(blocks: dict[str, Any], order: list[str]) -> str:
     """Return a compact searchable lead even when a page starts with a list/quote."""
     for bid in order:
@@ -379,19 +531,23 @@ def page_from_markdown(ws: Workspace, path: Path, page_type: str | None = None,
     blocks, order = parse_blocks(page_id, body)
     title = next((b["data"]["text"] for b in blocks.values()
                   if b["kind"] == "heading" and b["data"].get("level") == 1), slug)
-    source_refs = [norm(value) for value in (meta.get("sources") or []) if norm(value)]
-    source_refs = [value if SOURCE_REF.match(value) else f"source:{value}" for value in source_refs]
+    source_refs = [value if SOURCE_REF.match(value) else f"source:{value}"
+                   for value in string_list(meta.get("sources"))]
     raw_ref = norm(meta.get("raw")) or ws.rel(path)
     inferred_summary = summary_from_blocks(blocks, order)
     stamp = today()
+    links = page_links(page_id, blocks, order)
+    links.extend(reference_links(source_refs, string_list(meta.get("supersedes")),
+                                 string_list(meta.get("related"))))
     return {
         "schema_version": "1.0", "id": page_id, "slug": slug, "title": title,
         "type": page_type or meta.get("type") or "source",
         "created": meta.get("created") or stamp, "updated": meta.get("updated") or stamp,
-        "tags": meta.get("tags") or [], "projects": projects or meta.get("projects") or [],
+        "tags": string_list(meta.get("tags")),
+        "projects": string_list(projects) or string_list(meta.get("projects")),
         "sources": source_refs, "raw_ref": raw_ref,
         "summary": summary or inferred_summary[:280], "blocks": blocks, "block_order": order,
-        "links": page_links(page_id, blocks, order),
+        "links": links,
         "history": [{"at": stamp, "action": "ingested", "actor": "llmwiki-cli", "note": ws.rel(path)}],
         "source_snapshot": {"format": "markdown", "text": text, "sha256": sha(text)},
     }
@@ -551,13 +707,71 @@ def validate_page(page: dict[str, Any], validator: SchemaValidator | None = None
 
 # --------------------------------------------------------------------------- projection / build
 def project_group(projects: Iterable[str], groups: dict[str, Any]) -> str:
-    projects = list(projects)
+    projects = [norm(project).lower() for project in projects if norm(project)]
     if len(projects) > 1:
         return "multi"
-    for key in ("alpha", "beta", "common"):
-        if any(p in groups["project"].get(key, {}).get("match", []) for p in projects):
+    for key, config in groups.get("project", {}).items():
+        if key in RESERVED_PROJECT_GROUPS:
+            continue
+        matches = {norm(value).lower() for value in config.get("match", []) if norm(value)}
+        if any(project in matches for project in projects):
             return key
     return "ungrouped"
+
+
+def project_group_key(project: str) -> str:
+    """Return a stable config key for a newly observed canonical project value."""
+    key = BLOCK_KEEP.sub("-", norm(project).lower()).strip("-._")
+    return key or f"project-{sha(norm(project), 8)}"
+
+
+def auto_project_groups(projects: Iterable[str], groups: dict[str, Any]) -> dict[str, Any]:
+    """Groups for project values `groups.json` has never been told about.
+
+    A project the config has not heard of used to fall into `ungrouped`, which
+    made every new workstream look unclassified. Deriving the group instead
+    keeps the answer a pure function of (pages, config) — same input, same
+    key, same colour — while `register_project_groups` writes it down so the
+    label and colour can then be edited by hand.
+    """
+    configured = groups.get("project", {})
+    known = {norm(value).lower()
+             for key, config in configured.items() if key not in RESERVED_PROJECT_GROUPS
+             for value in config.get("match", []) if norm(value)}
+    used_colors = {config.get("color") for config in configured.values()}
+    additions: dict[str, Any] = {}
+    for project in sorted({norm(value) for value in projects if norm(value)}):
+        if project.lower() in known:
+            continue
+        known.add(project.lower())
+        key = project_group_key(project)
+        if key in configured or key in additions:
+            key = f"{key}-{sha(project, 8)}"
+        color = next((value for value in AUTO_PROJECT_COLORS if value not in used_colors),
+                     AUTO_PROJECT_COLORS[len(additions) % len(AUTO_PROJECT_COLORS)])
+        used_colors.add(color)
+        label = project.upper() if re.fullmatch(r"[A-Za-z0-9._-]{1,12}", project) else project
+        additions[key] = {"label": label, "color": color, "match": [project]}
+    return additions
+
+
+def merge_project_groups(groups: dict[str, Any], additions: dict[str, Any]) -> dict[str, Any]:
+    """Ordinary groups, then the derived ones, with `multi`/`ungrouped` last."""
+    if not additions:
+        return groups
+    configured = groups.get("project", {})
+    ordinary = {k: v for k, v in configured.items() if k not in RESERVED_PROJECT_GROUPS}
+    reserved = {k: v for k, v in configured.items() if k in RESERVED_PROJECT_GROUPS}
+    return {**groups, "project": {**ordinary, **additions, **reserved}}
+
+
+def register_project_groups(ws: Workspace, projects: Iterable[str], *, write: bool) -> list[str]:
+    """Persist previously unseen project values so ingest cannot silently ungroup them."""
+    groups = ws.load_groups()
+    additions = auto_project_groups(projects, groups)
+    if additions and write:
+        dump(ws.groups_path, merge_project_groups(groups, additions), pretty=True)
+    return list(additions)
 
 
 def unresolved_count(page: dict[str, Any]) -> int:
@@ -588,17 +802,21 @@ def project(ws: Workspace) -> dict[str, Any]:
             block_owner[bid] = page["id"]
 
     groups = ws.load_groups()
-    by_slug = {p["slug"]: p for p in pages}
+    groups = merge_project_groups(
+        groups, auto_project_groups((p for page in pages for p in page["projects"]), groups))
+    lookup = page_lookup(pages)
     incoming: Counter[str] = Counter()
     outgoing: Counter[str] = Counter()
     edges: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str]] = set()
     for page in pages:
-        for link in page["links"]:
-            target = by_slug.get(link["target"])
-            if not target:
+        for link in implied_links(page):
+            target = lookup.get(link_key(link["target"]))
+            if not target or target["id"] == page["id"]:
                 continue
-            key = (page["id"], target["id"], link["kind"])
+            # One line per ordered pair: a page that both links to and cites
+            # another gets one edge, not two stacked on top of each other.
+            key = (page["id"], target["id"])
             if key in seen:
                 continue
             seen.add(key)
@@ -626,8 +844,9 @@ def project(ws: Workspace) -> dict[str, Any]:
     # sector, a golden-ratio sequence distributes nodes from the centre to the
     # rim without rings or clumps. The resulting silhouette is a true disk,
     # while adjacent colours still make project groups easy to distinguish.
-    ordered_groups = [g for g in GROUP_ORDER if buckets.get(g)]
-    ordered_groups.extend(sorted(g for g in buckets if g not in GROUP_ORDER))
+    configured_order = list(groups.get("project", {}))
+    ordered_groups = [group for group in configured_order if buckets.get(group)]
+    ordered_groups.extend(sorted(group for group in buckets if group not in configured_order))
     total_nodes = max(1, len(nodes))
     sector_start = -math.pi / 2
     for group in ordered_groups:
@@ -796,9 +1015,14 @@ def split_address(selector: str) -> tuple[str, str | None]:
 
 def find_page(ws: Workspace, selector: str) -> dict[str, Any]:
     selector = norm(selector)
-    for page in ws.load_pages():
+    pages = ws.load_pages()
+    for page in pages:
         if selector in {page["id"], page["slug"], page["id"].removeprefix("page:")}:
             return page
+    # Same tolerance the graph uses: a title or a differently-cased slug still lands.
+    match = page_lookup(pages).get(link_key(selector))
+    if match:
+        return match
     raise WikiError(f"page not found: {selector}")
 
 
@@ -910,12 +1134,21 @@ def lint(ws: Workspace) -> tuple[list[str], list[str]]:
                 errors.append(f"{page['id']}: duplicate block id {bid} (also in {seen_blocks[bid]})")
             seen_blocks[bid] = page["id"]
 
+    lookup = page_lookup(pages)
     for page in pages:
-        for link in page.get("links", []):
-            if link.get("target") not in by_slug:
-                errors.append(f"{page['id']}: missing link target [[{link.get('target')}]]")
+        declared = {link_key(link.get("target", "")) for link in page.get("links", [])}
+        for link in implied_links(page):
+            target = lookup.get(link_key(link["target"]))
+            if target is None:
+                # A `source:` ref may name evidence that has no page of its own;
+                # a [[wikilink]] that resolves to nothing is always a mistake.
+                if link["kind"] == "wiki":
+                    errors.append(f"{page['id']}: missing link target [[{link['target']}]]")
+                continue
+            if link["kind"] == "wiki" and link_key(link["target"]) not in declared:
+                warnings.append(f"{page['id']}: block link [[{link['target']}]] missing from links")
         for ref in page.get("sources", []):
-            if str(ref).startswith("page:") and str(ref).removeprefix("page:") not in by_slug:
+            if str(ref).startswith("page:") and link_key(str(ref)) not in lookup:
                 errors.append(f"{page['id']}: source ref {ref} has no page")
         for bid in page.get("block_order", []):
             block = page["blocks"][bid]
@@ -926,10 +1159,11 @@ def lint(ws: Workspace) -> tuple[list[str], list[str]]:
 
     degree: Counter[str] = Counter()
     for page in pages:
-        for link in page.get("links", []):
-            if link.get("target") in by_slug:
+        for link in implied_links(page):
+            target = lookup.get(link_key(link["target"]))
+            if target is not None and target["id"] != page["id"]:
                 degree[page["slug"]] += 1
-                degree[link["target"]] += 1
+                degree[target["slug"]] += 1
     for page in pages:
         if page.get("type") not in UNLINKED_TYPES and degree[page.get("slug")] == 0:
             warnings.append(f"{page['id']}: orphan (no inbound or outbound links)")
@@ -998,6 +1232,9 @@ def ingest(ws: Workspace, source: Path, page_type: str | None = None,
             page["projects"] = projects
         if summary:
             page["summary"] = summary
+        for key in ("tags", "projects", "sources"):
+            if key in page:
+                page[key] = string_list(page[key])
         page.setdefault("history", []).append(
             {"at": today(), "action": "ingested", "actor": "llmwiki-cli", "note": ws.rel(path)})
     else:
@@ -1014,21 +1251,36 @@ def ingest(ws: Workspace, source: Path, page_type: str | None = None,
         raise WikiError(f"{page['id']} already exists at {ws.rel(existing)} — pass --update to replace")
     if existing:
         prior = json.loads(existing.read_text(encoding="utf-8"))
+        if not isinstance(prior, dict):
+            raise WikiError(f"{ws.rel(existing)} holds several pages in one file — "
+                            "edit it directly instead of ingesting over it")
+        if norm(prior.get("id")) != page["id"]:
+            raise WikiError(f"{ws.rel(existing)} already holds {prior.get('id')} — "
+                            f"{page['id']} would overwrite a different page")
         page["created"] = prior.get("created", page["created"])
         page["history"] = [*prior.get("history", []), *page["history"]]
-        dest = existing
 
+    registered_groups = register_project_groups(ws, page["projects"], write=not dry_run)
+    # A page whose type changed belongs in the directory of its new type —
+    # leaving it behind would file an entity under wiki/sources/.
+    moved_from = existing if existing and existing.resolve() != dest.resolve() else None
     result = {"page_id": page["id"], "dest": ws.rel(dest), "blocks": len(page["blocks"]),
-              "updated": bool(existing), "dry_run": dry_run}
+              "updated": bool(existing), "dry_run": dry_run,
+              "registered_groups": registered_groups}
+    if moved_from:
+        result["moved_from"] = ws.rel(moved_from)
     if dry_run:
         return result
 
     dump(dest, page, pretty=True)
+    if moved_from:
+        moved_from.unlink(missing_ok=True)
     if sha(path.read_bytes().hex()) != before:
         raise WikiError(f"source {ws.rel(path)} changed during ingest — raw/ must stay immutable")
     append_log(ws, {"action": "ingest", "page_id": page["id"],
                     "source": ws.rel(path), "dest": ws.rel(dest),
-                    "mode": "update" if existing else "create"})
+                    "mode": "update" if existing else "create",
+                    "registered_groups": registered_groups})
     return result
 
 

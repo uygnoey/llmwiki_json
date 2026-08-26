@@ -154,3 +154,58 @@ class PageFromMarkdownTest(WorkspaceCase):
         path = self.write_raw("list-first.md", "# 목록\n\n- 첫 번째 핵심 사실\n- 다음 사실\n")
         self.assertEqual(llmwiki.page_from_markdown(self.ws, path)["summary"],
                          "첫 번째 핵심 사실 다음 사실")
+
+
+class FrontmatterShapeTest(WorkspaceCase):
+    """실제 노트가 쓰는 YAML 표기들 — 어느 쪽이든 같은 결과여야 한다."""
+
+    def test_block_sequences_are_parsed(self) -> None:
+        meta, body = llmwiki.split_frontmatter(
+            "---\ntype: source\nprojects:\n  - OSE\n  - 공통\ntags:\n  - 주간보고\n"
+            "  - 검색\n---\n# 본문\n")
+        self.assertEqual(meta["projects"], ["OSE", "공통"])
+        self.assertEqual(meta["tags"], ["주간보고", "검색"])
+        self.assertEqual(body, "# 본문\n")
+
+    def test_quotes_and_comments_are_stripped(self) -> None:
+        meta, _ = llmwiki.split_frontmatter(
+            '---\n# 메모다\ntags: ["a", \'b\', "c, d"]\nraw: "raw/x.md"\n---\n# 본문\n')
+        self.assertEqual(meta["tags"], ["a", "b", "c, d"])
+        self.assertEqual(meta["raw"], "raw/x.md")
+
+    def test_empty_scalar_stays_null(self) -> None:
+        meta, _ = llmwiki.split_frontmatter("---\nnote:\nsummary: ~\n---\n# 본문\n")
+        self.assertIsNone(meta["note"])
+        self.assertIsNone(meta["summary"])
+
+    def test_string_list_coerces_and_deduplicates(self) -> None:
+        self.assertEqual(llmwiki.string_list("alpha"), ["alpha"])
+        self.assertEqual(llmwiki.string_list("alpha, beta"), ["alpha", "beta"])
+        self.assertEqual(llmwiki.string_list(["a", " a ", "b"]), ["a", "b"])
+        self.assertEqual(llmwiki.string_list(None), [])
+
+
+class RelationLinkTest(WorkspaceCase):
+    def test_block_sequence_metadata_reaches_the_page(self) -> None:
+        path = self.write_raw(
+            "weekly.md",
+            "---\ntype: source\nprojects:\n  - OSE\ntags:\n  - 주간보고\nsources:\n"
+            "  - user:2026-08-19\n  - page:alpha\n---\n# 주간보고\n\n[[alpha]] 진행.\n")
+        page = llmwiki.page_from_markdown(self.ws, path)
+        self.assertEqual(page["projects"], ["OSE"])
+        self.assertEqual(page["tags"], ["주간보고"])
+        self.assertEqual(page["sources"], ["user:2026-08-19", "page:alpha"])
+        self.assertEqual(llmwiki.validate_page(page, llmwiki.SchemaValidator.load(self.ws)), [])
+
+    def test_sources_supersedes_and_related_become_links(self) -> None:
+        path = self.write_raw(
+            "relations.md",
+            "---\ntype: entity\nsources: [page:alpha, user:2026-08-19, raw:notes.md]\n"
+            "supersedes: [old-page]\nrelated: [beta]\n---\n# 관계\n\n본문.\n")
+        links = {(link["target"], link["kind"]) for link in llmwiki.page_from_markdown(self.ws, path)["links"]}
+        self.assertIn(("alpha", "source"), links)
+        self.assertIn(("old-page", "supersedes"), links)
+        self.assertIn(("beta", "related"), links)
+        # 위키 밖 근거는 그릴 노드가 없다.
+        self.assertNotIn("notes.md", {target for target, _ in links})
+        self.assertNotIn("2026-08-19", {target for target, _ in links})

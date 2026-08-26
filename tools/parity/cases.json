@@ -1,0 +1,286 @@
+{
+  "schema_version": "1.0",
+  "note": "Python(정본) 과 Bun(후보) 의 원시 의미론을 같은 입력으로 대조하는 corpus. 각 case 는 두 런타임에서 같은 문자열을 내야 하고, 지금 갈라지는 것은 expect='diverge' 로 기록해 둔다 — 나중에 TS 로 포팅할 때 반드시 막아야 하는 지점 목록이다.",
+  "cases": [
+    {
+      "id": "json/float-integral",
+      "kind": "json",
+      "input": [
+        18.0,
+        -3.0,
+        0.0
+      ],
+      "expect": "diverge",
+      "mitigation": "정수값 float 를 Python 은 18.0, JS 는 18 로 쓴다. JSON.stringify 를 쓰지 말고 Python repr 규칙을 재현하는 직렬화기를 둔다."
+    },
+    {
+      "id": "json/float-negative-zero",
+      "kind": "json",
+      "input": [
+        -0.0
+      ],
+      "expect": "diverge",
+      "mitigation": "Python 은 -0.0, JS 는 0. 직렬화기가 부호를 보존해야 한다."
+    },
+    {
+      "id": "json/float-exponent",
+      "kind": "json",
+      "input": [
+        1e-06,
+        1.5e-06,
+        1e-05,
+        1e-07
+      ],
+      "expect": "diverge",
+      "mitigation": "지수 표기 전환점이 다르다(Python 1e-04 미만, JS 1e-06 미만). 직렬화기가 Python 의 전환점을 따라야 한다."
+    },
+    {
+      "id": "json/float-ordinary",
+      "kind": "json",
+      "input": [
+        0.407525,
+        -10.858285,
+        0.5,
+        3.14159
+      ],
+      "expect": "match",
+      "mitigation": "현재 graph.json 좌표는 이 구간에만 있어 지금은 우연히 같다. 위 세 case 가 갈라지므로 안심하면 안 된다."
+    },
+    {
+      "id": "json/non-ascii",
+      "kind": "json",
+      "input": [
+        "한글",
+        "⚠️ 상충",
+        "café"
+      ],
+      "expect": "match",
+      "mitigation": "ensure_ascii=False 와 JS 기본 동작이 일치한다."
+    },
+    {
+      "id": "json/empty-containers",
+      "kind": "json",
+      "input": {
+        "a": [],
+        "b": {},
+        "c": null
+      },
+      "expect": "match",
+      "mitigation": "compact separators 에서 일치한다."
+    },
+    {
+      "id": "json/numeric-like-keys",
+      "kind": "json",
+      "input": {
+        "2": "b",
+        "1": "a",
+        "page:x": "c"
+      },
+      "expect": "diverge",
+      "mitigation": "JS 객체는 정수형 키를 앞으로 재정렬한다. page/block id 는 안전하지만, 숫자 키가 생길 수 있는 자리에는 Map 을 쓰고 삽입 순서를 직렬화기가 지켜야 한다."
+    },
+    {
+      "id": "json/pretty-indent",
+      "kind": "json_pretty",
+      "input": {
+        "id": "page:x",
+        "blocks": {
+          "block:x:ab:1": {
+            "kind": "paragraph"
+          }
+        },
+        "tags": []
+      },
+      "expect": "match",
+      "mitigation": "indent=2 와 JSON.stringify(v,null,2) 의 들여쓰기·구분자가 일치한다."
+    },
+    {
+      "id": "json/astral",
+      "kind": "json",
+      "input": [
+        "𝄞",
+        "👍🏽"
+      ],
+      "expect": "match",
+      "mitigation": "BMP 밖 문자도 그대로 출력된다."
+    },
+    {
+      "id": "sha256/ascii",
+      "kind": "sha256",
+      "input": "page:alpha-platform",
+      "expect": "match",
+      "mitigation": "hashlib.sha256 과 Bun.CryptoHasher 가 같다."
+    },
+    {
+      "id": "sha256/korean",
+      "kind": "sha256",
+      "input": "질환 통합검색 ⚠️",
+      "expect": "match",
+      "mitigation": "UTF-8 인코딩이 같으면 같다."
+    },
+    {
+      "id": "nfc/decomposed-hangul",
+      "kind": "nfc",
+      "input": "글글",
+      "expect": "match",
+      "mitigation": "String.normalize('NFC') 가 unicodedata.normalize 와 같다. Unicode 버전이 어긋나면 갈라질 수 있으므로 계약에 버전을 적는다."
+    },
+    {
+      "id": "nfc/combining-latin",
+      "kind": "nfc",
+      "input": "café Å",
+      "expect": "match",
+      "mitigation": "동일."
+    },
+    {
+      "id": "casefold/ascii-and-hangul",
+      "kind": "casefold",
+      "input": [
+        "Alpha Platform",
+        "질환-통합검색",
+        "ABC"
+      ],
+      "expect": "match",
+      "mitigation": "실제 link_key 가 다루는 입력은 이 범위다."
+    },
+    {
+      "id": "casefold/sharp-s-and-sigma",
+      "kind": "casefold",
+      "input": [
+        "Straße",
+        "ΣΊΣΥΦΟΣ",
+        "İstanbul"
+      ],
+      "expect": "diverge",
+      "mitigation": "Python casefold 는 ß→ss, 최종 시그마까지 접는다. JS toLowerCase 는 아니다. link_key 를 포팅하려면 casefold 표를 함께 옮기거나 규칙을 toLowerCase 로 재정의하고 정본을 다시 만들어야 한다."
+    },
+    {
+      "id": "sort/bmp-only",
+      "kind": "sort",
+      "input": [
+        "page:beta",
+        "page:alpha",
+        "page:질환",
+        "page:Alpha",
+        "page:_x"
+      ],
+      "expect": "match",
+      "mitigation": "BMP 안에서는 code point 순서와 UTF-16 code unit 순서가 같다."
+    },
+    {
+      "id": "sort/astral-vs-bmp",
+      "kind": "sort",
+      "input": [
+        "𝄞",
+        "￿",
+        "a"
+      ],
+      "expect": "diverge",
+      "mitigation": "JS 기본 sort 는 surrogate pair 를 U+FFFF 보다 앞에 둔다. code point comparator 를 명시하고 localeCompare 를 쓰지 않는다."
+    },
+    {
+      "id": "length/astral",
+      "kind": "codepoints",
+      "input": "𝄞abc",
+      "expect": "diverge",
+      "mitigation": "Python len 은 code point, JS length 는 UTF-16 단위다. summary 280자 자르기 같은 길이 제한은 code point iterator 로 구현한다."
+    },
+    {
+      "id": "regex/digit-class",
+      "kind": "regex",
+      "input": {
+        "pattern": "\\d+",
+        "text": "١٢٣ 123"
+      },
+      "expect": "diverge",
+      "mitigation": "Python \\d 는 Unicode 숫자를 포함하고 JS \\d 는 ASCII 뿐이다. 날짜·주소처럼 ASCII 의도면 [0-9] 로 명시한다."
+    },
+    {
+      "id": "regex/whitespace-class",
+      "kind": "regex",
+      "input": {
+        "pattern": "a\\sb",
+        "text": "a b"
+      },
+      "expect": "match",
+      "mitigation": "\\s 의 NBSP 처리는 양쪽 모두 포함이다. 다른 공백류는 case 를 늘려 확인한다."
+    },
+    {
+      "id": "regex/hangul-range",
+      "kind": "regex",
+      "input": {
+        "pattern": "[가-힣]+",
+        "text": "질환 통합검색 abc"
+      },
+      "expect": "match",
+      "mitigation": "명시적 범위라 방언 차이가 없다."
+    },
+    {
+      "id": "regex/wikilink",
+      "kind": "regex",
+      "input": {
+        "pattern": "\\[\\[([^\\]|#]+)(?:#([^\\]|]+))?(?:\\|([^\\]]+))?\\]\\]",
+        "text": "[[Alpha Platform]] 과 [[icd-10#블록|ICD-10]]"
+      },
+      "expect": "match",
+      "mitigation": "실제 WIKILINK 패턴. 미매치 그룹을 Python 은 None, JS 는 undefined 로 주므로 콜백에서 통일해야 한다."
+    },
+    {
+      "id": "regex/frontmatter-key",
+      "kind": "regex",
+      "input": {
+        "pattern": "^([^\\s:#][^:]*):[ \\t]*(.*)$",
+        "text": "note: see http://x"
+      },
+      "expect": "match",
+      "mitigation": "실제 META_KEY 패턴. JS 는 ^$ 가 기본적으로 문자열 전체 기준이므로 m flag 유무를 명시한다."
+    },
+    {
+      "id": "regex/secret",
+      "kind": "regex",
+      "input": {
+        "pattern": "(?i)(api[_-]?key|password|secret)\\s*[:=]\\s*[^\\s,;\"']+",
+        "text": "API_KEY = abc123"
+      },
+      "expect": "diverge",
+      "mitigation": "Python inline flag (?i) 를 JS 는 지원하지 않는다. flag 를 패턴 문자열에서 분리해 RegExp 생성자에 넘긴다."
+    },
+    {
+      "id": "json/float-large",
+      "kind": "json",
+      "input": [
+        1e+16,
+        1e+17,
+        7.720307457827019e+19,
+        4.763094533649826e+18
+      ],
+      "expect": "diverge",
+      "mitigation": "|v|>=1e16 에서 JS toString 은 지수 없는 긴 십진수를 내놓는다. 이것을 지수 표기로 되돌릴 때 유효숫자 뒤의 0 을 붙이면 안 된다 — Python 은 최단 왕복 표기를 쓴다."
+    },
+    {
+      "id": "json/float-boundary",
+      "kind": "json",
+      "input": [
+        0.0001,
+        9.999e-05,
+        1e-16,
+        5e-324,
+        1.7976931348623157e+308
+      ],
+      "expect": "diverge",
+      "mitigation": "지수 전환 경계와 subnormal·최대값. 경계 한 칸 차이로 표기가 바뀌므로 전환 조건을 값이 아니라 지수로 판정해야 한다."
+    },
+    {
+      "id": "casefold/ligature-and-cherokee",
+      "kind": "casefold",
+      "input": [
+        "ﬁ",
+        "ﬄ",
+        "ᾼ",
+        "ᏸ"
+      ],
+      "expect": "diverge",
+      "mitigation": "casefold 는 합자를 풀고(ﬁ→fi) 그리스 iota subscript 를 펴며(ᾼ→αι) 체로키는 오히려 대문자로 접는다(ᏸ→Ᏸ). toLowerCase 만으로는 안 되고 CaseFolding.txt 의 full-fold 예외표(약 300자)를 함께 옮겨야 한다. 예외표 + 문자별 toLowerCase 로 하면 인쇄 가능한 BMP 전체에서 일치한다 — 문자열 단위 toLowerCase 는 최종 시그마를 문맥에 따라 바꾸므로 반드시 문자별로 접어야 한다."
+    }
+  ]
+}

@@ -45,6 +45,10 @@ bun install
 bun run dev
 ```
 
+`index/`와 `viewer/public/data/`는 커밋하지 않는 파생물이라 clone 직후에는 비어 있습니다. 위 `build`가 채우고, 개발 서버는 뜰 때와 `wiki/**/*.json`이 바뀔 때마다 다시 만듭니다.
+
+viewer가 CLI를 부를 때 쓰는 Python은 `LLMWIKI_PYTHON` → `python3` → `python` → `py` 순으로 찾습니다. `python3`라는 이름이 없는 기계(Windows, uv로 받은 Python만 있는 기계)에서는 `LLMWIKI_PYTHON`에 실행 파일 절대경로를 주거나 `scripts/install.sh`(Windows는 `scripts\install.ps1`)로 마련하십시오.
+
 Docker로 정적 빌드를 실행하려면 저장소 루트에서 다음 명령을 사용합니다. 빌드 단계에서 정본 `wiki/**/*.json`으로 파생 데이터를 다시 만든 뒤 Nginx가 `http://localhost:4173`에서 제공합니다.
 
 ```bash
@@ -78,6 +82,32 @@ python3 scripts/llmwiki.py query "검색어"
 | `outline <주소>` | heading block 목록 — 페이지 통독 없이 섹션만 고를 때 |
 | `export-md` | 렌더 Markdown + manifest 생성 (qmd 인덱싱용). `--out` |
 | `log` | `--action/--page/--note`로 append, 인자 없으면 `--show N`으로 조회 |
+
+### 소스 frontmatter
+
+`ingest`가 읽는 YAML 표기입니다. flow 리스트(`[a, b]`)와 블록 시퀀스(줄바꿈 + `- a`) 둘 다 같은 결과가 되고, 값의 따옴표는 벗겨집니다. 하나짜리 값은 리스트로 승격하고 중복은 제거합니다.
+
+```yaml
+---
+type: source            # source | entity | concept | synthesis | project | home | index | log
+created: 2026-08-19     # 없으면 오늘
+updated: 2026-08-19
+projects:               # 그래프 프로젝트 그룹. 2개 이상이면 '다중 프로젝트'
+  - OSE
+  - 공통
+tags: [주간보고, 검색]   # 태그 색상·범례 기준
+sources:                # 근거. page:/source:/raw:/user:YYYY-MM-DD
+  - page:질환-통합검색
+  - user:2026-08-19
+supersedes: [옛-페이지]  # 뒤집은 주장을 지우지 않고 관계로 남긴다
+related: [beta-search]
+raw: raw/2026-08/원본.md  # 없으면 ingest 한 파일 경로
+---
+```
+
+`sources`·`supersedes`·`related`는 본문 `[[위키링크]]`와 같은 자격의 그래프 선이 됩니다 — 위키 밖 근거(`user:`, `raw:`)만 선이 되지 않습니다. `groups.json`이 모르는 프로젝트 값은 ingest가 새 그룹으로 등록하고, 등록 전이라도 `build`가 같은 키·같은 색으로 그룹을 만들어 줍니다.
+
+`[[링크]]`는 slug 정확 일치만 찾지 않습니다. 대소문자, 공백·`_`와 `-`, `page:` 접두, 그리고 페이지 **제목**까지 같은 곳으로 해석합니다 — `[[Alpha Platform]]`, `[[alpha_platform]]`, `[[page:alpha-platform]]`은 모두 `alpha-platform`입니다.
 
 ### 주소 지정
 
@@ -149,13 +179,20 @@ python3 -m unittest discover -s tests -v   # 백엔드만
 
 테스트는 임시 디렉터리에 workspace를 만들어 돌기 때문에 실제 `wiki/`와 `raw/`를 건드리지 않습니다. 시계는 `LLMWIKI_NOW`로 고정합니다.
 
+```bash
+python3 tools/parity/parity.py build     # build 산출물의 바이트 결정성
+python3 tools/parity/parity.py corpus    # Python↔Bun 원시 의미론 대조
+```
+
+`tools/parity/`는 정본 구현이 결정적인지, 그리고 다른 런타임으로 옮기면 어디가 갈라지는지를 숫자로 답합니다. 자세한 것은 [docs/parity.md](docs/parity.md)에 있습니다.
+
 ## 불변식
 
 - `raw/`는 읽기 전용이다. ingest는 원본 해시를 전후로 대조해 변형되지 않았음을 확인한다.
 - `wiki/`의 JSON 페이지만 정본이다. Markdown/HTML 화면과 모든 index/map/graph는 JSON에서 만든 파생물이다.
 - 모든 페이지·블록은 위치가 아닌 영속 ID로 주소 지정한다.
 - 원문 ingest 시 `source_snapshot`을 보존해 `render --exact`로 exact Markdown round-trip을 지원한다.
-- `build`는 결정적이다 — 같은 입력이면 두 번 돌려도 바이트 단위로 같은 산출물이 나오고, 산출물에 담기는 경로는 저장소 상대 경로다.
+- `build`는 결정적이다 — 같은 입력이면 두 번 돌려도 바이트 단위로 같은 산출물이 나오고, 산출물에 담기는 경로는 저장소 상대 경로다. `python3 tools/parity/parity.py build`가 임시 저장소에서 이것을 실제 산출물로 확인한다([docs/parity.md](docs/parity.md)).
 - index/map/graph/search/viewer public data와 `index/markdown/`은 언제든 정본에서 재생성할 수 있다.
 - 자격증명·접속정보·API 키·토큰·연결 문자열을 기록하지 않는다. ingest가 값이 붙은 형태를 발견하면 거부한다.
 

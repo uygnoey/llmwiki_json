@@ -191,11 +191,11 @@ class ClassificationTest(WorkspaceCase):
     def test_json_page_metadata_is_normalised(self) -> None:
         page = make_page("json-note", "# JSON 노트\n\n본문.\n", type="entity")
         page["tags"] = ["a", " a ", "b"]
-        page["projects"] = ["OSE", "OSE"]
+        page["projects"] = ["Sandbox Lab", "Sandbox Lab"]
         path = self.root / "raw" / "page.json"
         path.write_text(json.dumps(page, ensure_ascii=False), encoding="utf-8")
         result = llmwiki.ingest(self.ws, path)
         stored = json.loads((self.root / result["dest"]).read_text(encoding="utf-8"))
         self.assertEqual(stored["tags"], ["a", "b"])
-        self.assertEqual(stored["projects"], ["OSE"])
-        self.assertEqual(result["registered_groups"], ["ose"])
+        self.assertEqual(stored["projects"], ["Sandbox Lab"])
+        self.assertEqual(result["registered_groups"], ["sandbox-lab"])

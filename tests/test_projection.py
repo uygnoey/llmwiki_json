@@ -205,22 +205,22 @@ class ProjectGroupTest(WorkspaceCase):
     """groups.json 이 모르는 프로젝트도 자기 그룹을 가진다 — 전부 '미분류'로 뭉치면 안 된다."""
 
     def test_unknown_project_gets_its_own_group_and_route(self) -> None:
-        self.write_pages([make_page("note", "# Note\n\n본문.\n", projects=["OSE"])])
+        self.write_pages([make_page("note", "# Note\n\n본문.\n", projects=["Sandbox Lab"])])
         payloads = llmwiki.project(self.ws)
         node = payloads["graph.json"]["nodes"][0]
-        self.assertEqual(node["group"], "ose")
-        group = payloads["graph.json"]["groups"]["project"]["ose"]
-        self.assertEqual(group["label"], "OSE")
-        self.assertEqual(group["match"], ["OSE"])
-        self.assertEqual(payloads["routes.json"]["ose"], ["page:note"])
+        self.assertEqual(node["group"], "sandbox-lab")
+        group = payloads["graph.json"]["groups"]["project"]["sandbox-lab"]
+        self.assertEqual(group["label"], "Sandbox Lab")
+        self.assertEqual(group["match"], ["Sandbox Lab"])
+        self.assertEqual(payloads["routes.json"]["sandbox-lab"], ["page:note"])
 
     def test_derived_groups_do_not_touch_the_config_file(self) -> None:
-        self.write_pages([make_page("note", "# Note\n\n본문.\n", projects=["OSE"])])
+        self.write_pages([make_page("note", "# Note\n\n본문.\n", projects=["Sandbox Lab"])])
         before = self.ws.groups_path.read_bytes()
         llmwiki.build(self.ws)
         self.assertEqual(self.ws.groups_path.read_bytes(), before)
 
     def test_reserved_groups_stay_last(self) -> None:
-        self.write_pages([make_page("note", "# Note\n\n본문.\n", projects=["OSE"])])
+        self.write_pages([make_page("note", "# Note\n\n본문.\n", projects=["Sandbox Lab"])])
         keys = list(llmwiki.project(self.ws)["graph.json"]["groups"]["project"])
         self.assertEqual(keys[-2:], ["multi", "ungrouped"])

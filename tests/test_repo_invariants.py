@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 
 from tests.support import REPO, llmwiki
@@ -51,9 +52,33 @@ class SourceLayoutTest(unittest.TestCase):
     def test_package_scripts_call_the_cli(self) -> None:
         package = json.loads((REPO / "viewer" / "package.json").read_text(encoding="utf-8"))
         scripts = package["scripts"]
-        self.assertIn("scripts/llmwiki.py build", scripts["build:data"])
-        self.assertIn("scripts/llmwiki.py build --fixtures", scripts["build:data:demo"])
-        self.assertIn("unittest discover -s tests", scripts["test"])
+        self.assertIn("scripts/wiki-cli.ts build", scripts["build:data"])
+        self.assertIn("scripts/wiki-cli.ts build --fixtures", scripts["build:data:demo"])
+        self.assertIn("--tests", scripts["test"])
+        cli = (REPO / "viewer" / "scripts" / "wiki-cli.ts").read_text(encoding="utf-8")
+        self.assertIn("scripts/llmwiki.py", cli)
+        self.assertIn("unittest", cli)
+
+    def test_viewer_never_hardcodes_an_interpreter_name(self) -> None:
+        """`python3` 는 어느 기계에나 있는 이름이 아니다 — 해석은 resolvePython 한 곳에서만 한다."""
+        resolver = REPO / "viewer" / "scripts" / "wiki-data.ts"
+        comments = re.compile(r"/\*.*?\*/|//[^\n]*", re.S)
+        literal = re.compile(r"[\"']py(thon3?|)[\"']")
+        for path in sorted((REPO / "viewer").rglob("*.ts")):
+            if "node_modules" in path.parts or path == resolver:
+                continue
+            code = comments.sub("", path.read_text(encoding="utf-8"))
+            self.assertIsNone(literal.search(code), path)
+        package = (REPO / "viewer" / "package.json").read_text(encoding="utf-8")
+        self.assertIsNone(literal.search(package))
+        self.assertIn("LLMWIKI_PYTHON", resolver.read_text(encoding="utf-8"))
+
+    def test_viewer_holds_only_typescript_sources(self) -> None:
+        derived = {"node_modules", "dist"}   # 받아 온 것과 구운 것은 소스가 아니다
+        for path in sorted((REPO / "viewer").rglob("*.js*")):
+            if derived & set(path.parts) or path.suffix == ".json":
+                continue
+            self.fail(f"viewer must stay TypeScript-only: {path}")
 
     def test_derived_artifacts_are_gitignored(self) -> None:
         ignored = (REPO / ".gitignore").read_text(encoding="utf-8").splitlines()

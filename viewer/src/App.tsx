@@ -7,6 +7,7 @@ import { Button } from "./components/ui/button";
 import { Skeleton } from "./components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./components/ui/tooltip";
 import { primaryTag } from "./lib/colors";
+import { linkKey } from "./lib/render";
 import { useTheme } from "./lib/theme";
 import type { ColorBy, GraphCanvasHandle, GraphPayload, GraphSettings, Stats, WikiPage } from "./types";
 
@@ -100,7 +101,12 @@ export default function App() {
     return true;
   }).map(n=>n.id)),[data,colorBy,enabledGroups,showOrphans,conflictsOnly,query]);
   const select=useCallback((id:string|null)=>{setSelectedId(id);if(id)setSidebarOpen(false)},[]);
-  const navigateSlug=(slug:string)=>{const node=data.nodes.find(n=>n.slug===slug);if(node)select(node.id)};
+  /* 본문 [[링크]]는 slug 그대로 쓰이기도, 제목이나 다른 표기로 쓰이기도 한다 — 그래프 edge 와 같은 규칙으로 찾는다. */
+  const navigateSlug=(target:string)=>{
+    const key=linkKey(target);
+    const node=data.nodes.find(n=>n.slug===target)??data.nodes.find(n=>linkKey(n.slug)===key||linkKey(n.id)===key||linkKey(n.label)===key);
+    if(node)select(node.id);
+  };
   const toggleGroup=(group:string)=>setEnabledGroups(current=>{const next=new Set(current);next.has(group)?next.delete(group):next.add(group);return next});
   const graphProps={data,visibleIds,selectedId,colorBy,showColors,theme,onSelect:select};
 

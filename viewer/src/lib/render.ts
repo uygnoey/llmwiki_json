@@ -10,6 +10,13 @@ const links = (value: unknown) => esc(value).replace(
   (_match, target: string, alias?: string) => `<button class="wiki-inline-link" data-target="${target}">${alias || target}</button>`,
 );
 
+/** 링크 비교 키 — 대소문자·공백·`page:` 접두를 무시한다.
+ *  scripts/llmwiki.py 의 link_key 와 같은 규칙이라 그래프와 본문이 같은 곳으로 간다. */
+export function linkKey(value: string): string {
+  return String(value ?? "").normalize("NFC").trim().replace(/^page:/, "")
+    .toLowerCase().replace(/[\s_]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 export function pageMarkdown(page: WikiPage): string {
   const frontmatter = [
     "---",

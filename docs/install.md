@@ -96,6 +96,11 @@ hook 이 오래 살아남는다. 다만 **이미 있을 때만** 쓴다. 쓸 만
 고른 인터프리터는 hook·전역 지침·MCP 등록에 모두 같은 것이 박힌다. 그래야
 `verify` 가 검증한 것과 질문마다 실제로 도는 것이 같아진다.
 
+viewer 는 이 설치와 별개로 돌기 때문에 자기 순서를 따로 가진다 —
+`LLMWIKI_PYTHON` → `python3` → `python` → `py`. `python3` 라는 이름이 없는
+기계(Windows, uv 로 받은 Python 만 있는 기계)에서는 `LLMWIKI_PYTHON` 에 이
+스크립트가 고른 절대경로를 그대로 주면 된다.
+
 ### 받아 오지 않게 하려면
 
 ```bash

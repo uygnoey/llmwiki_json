@@ -125,7 +125,7 @@ Python 이 없으면 명확한 오류로 멈추고(설정은 한 글자도 건�
 ## 명령
 
 ```
-scripts/install.sh [install|verify|uninstall|doctor] [옵션]
+scripts/install.sh [install|verify|uninstall|doctor|update] [옵션]
 ```
 
 | 명령 | 하는 일 |
@@ -134,6 +134,7 @@ scripts/install.sh [install|verify|uninstall|doctor] [옵션]
 | `verify` | 설치 상태를 점검한다. 아무것도 고치지 않는다. 실패 시 exit 1 |
 | `uninstall` | 이 스크립트가 넣은 것만 되돌린다 |
 | `doctor` | 감지 결과와 해석된 경로만 출력한다 |
+| `update` | upstream(`origin`)에서 코드 갱신만 ff-only 로 받아 온다. 개인 위키는 건드리지 않는다 |
 
 | 옵션 | 뜻 |
 |---|---|
@@ -148,6 +149,40 @@ scripts/install.sh [install|verify|uninstall|doctor] [옵션]
 | `--mcp-name N` / `--qmd-name N` | 이름 바꾸기 (기본 `llmwiki` / `llmwiki_json`) |
 | `--force` | 미지원 OS 나 미감지 클라이언트에서도 강행한다 |
 | `-q`, `--quiet` | 진행 로그를 줄인다 (클라이언트 실행 파일도 부르지 않는다) |
+| `--ingest-routine C` | 주기 루틴을 걸 에이전트 — `claude` · `codex` · `none`. 주지 않으면 설치 중에 물어본다 |
+| `--routine-interval S` | 루틴 주기(초, 기본 3600) |
+| `--private-remote URL` | 개인 private 저장소를 remote 로 붙인다 |
+| `--gh-create NAME` | `gh` 로 private 저장소를 새로 만들어 붙인다 |
+| `--no-private` | 개인 저장소를 붙이지 않는다 (묻지도 않는다) |
+| `--remote-name N` | 그 remote 의 이름 (기본 `private`). `origin` 은 손대지 않는다 |
+| `-y`, `--yes` | 대화형 질문을 하지 않는다 — 플래그로 주지 않은 것은 건너뛴다 |
+
+질문은 TTY 에서만 한다. 파이프·CI 처럼 입력이 없는 자리에서는 묻지 않고 그냥
+건너뛰므로, 기존 무인 설치 흐름은 그대로다.
+
+### 주기 ingest 루틴
+
+`--ingest-routine` 을 고르면 OS 스케줄러(launchd · cron · schtasks)에 등록한다.
+한 번 돌 때의 순서는 이렇다:
+
+1. **`git pull`** — `private` remote 가 있으면 ff-only 로 맞춘다. 워킹트리가
+   더럽거나 히스토리가 갈라졌으면 **여기서 멈춘다**.
+2. 미처리 raw 소스 확인 — 없으면 에이전트를 부르지 않는다. 목록이 지난번과
+   같아도(에이전트가 이미 보고 판단한 것이면) 건너뛴다.
+3. 에이전트에게 ingest 를 맡긴다.
+4. `build` · `validate` — 깨졌으면 커밋하지 않는다.
+5. `wiki/` · `index/` · `viewer/public/data` 만 커밋하고 `private` 으로 push.
+
+`raw/.llmwikiignore` 에 glob 을 적어 소스가 아닌 파일을 뺄 수 있다. 겹쳐 도는
+것은 `$HOME/.llmwiki/routine.lock` 이 막고, 진행은 `$HOME/.llmwiki/routine.log`
+에 쌓인다. 등록 사실은 `$HOME/.llmwiki/installed-routine` 에만 기록하며,
+`uninstall` 은 그 기록이 있을 때만 스케줄러 항목을 지운다.
+
+### 개인 저장소
+
+`origin` 은 코드 갱신을 받는 자리로 그대로 둔다. 개인 위키는 `private` remote
+하나를 더 붙여 그쪽으로만 민다. 이름이 같은 remote 가 이미 있고 다른 곳을
+가리키면 덮어쓰지 않고 경고만 한다.
 
 ## 무엇을 건드리고 무엇을 건드리지 않는가
 
@@ -160,6 +195,8 @@ scripts/install.sh [install|verify|uninstall|doctor] [옵션]
 | `~/.codex/AGENTS.md`, `~/.claude/CLAUDE.md` | `<!-- llmwiki-context:start -->` … `end` 사이 섹션만 추가. 기존 본문은 그대로 |
 | MCP 등록 | `claude mcp add --scope user` / `codex mcp add`. 같은 이름이 이미 있으면 **그대로 둔다**. 우리가 실제로 등록한 것만 `$HOME/.llmwiki/installed-mcp` 에 기록한다 |
 | qmd collection | 기본으로 준비한다. 없으면 만들고, 우리 `index/markdown` 을 가리키고 있으면 재색인 |
+| OS 스케줄러 | `--ingest-routine` 을 고른 경우에만. launchd `com.llmwiki.ingest` · cron `# llmwiki-routine` 줄 · schtasks 작업 하나. 우리가 등록한 기록이 있을 때만 지운다 |
+| git remote | `--private-remote`/`--gh-create` 를 준 경우에만 remote 하나 **추가**. `origin` 과 기존 remote 는 그대로 |
 
 절대 건드리지 않는 것:
 

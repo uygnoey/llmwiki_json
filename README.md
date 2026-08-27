@@ -22,6 +22,7 @@ tools/schema/          JSON Schema
 tools/config/          프로젝트 그룹·색상 설정
 scripts/llmwiki.py     ingest/build/query/get/render/outline/export-md/lint/log CLI
 scripts/llmwiki_context.py  Codex·Claude 자동 컨텍스트 주입 hook/MCP CLI
+scripts/llmwiki_routine.py  주기 ingest 루틴 (스케줄러 등록·git 연동)
 scripts/install.sh     자동 주입 설치·검증·제거 (POSIX, macOS/Linux)
 scripts/install.ps1    같은 것의 Windows 판 (PowerShell 5.1+)
 tests/                 백엔드 unittest 스위트
@@ -127,7 +128,7 @@ block id는 `block:<slug>:<내용 지문>:<중복 순번>` 형태라, 페이지 
 
 ## 자동 컨텍스트 주입
 
-`scripts/llmwiki_context.py`는 Codex와 Claude Code의 `UserPromptSubmit` hook으로 붙어, 질문마다 정본에서 근거를 찾아 `<llmwiki-context>` 블록으로 주입합니다. 검색과 주입 본문 모두 `wiki/**/*.json`에서만 나오고, qmd는 후보 slug 탐색에만 씁니다. 관련도가 낮으면 아무것도 주입하지 않고, 어떤 오류에서도 질문을 막지 않습니다.
+`scripts/llmwiki_context.py`는 Codex와 Claude Code의 `UserPromptSubmit` hook으로 붙어, 질문마다 정본에서 근거를 찾아 `<llmwiki-context>` 블록으로 주입합니다. 검색과 주입 본문 모두 `wiki/**/*.json`에서만 나오고, qmd는 후보 slug 탐색에만 씁니다. 주입되는 것은 언제나 질문과 맞물린 block들이지 page 통짜가 아닙니다. 관련도가 어중간하면 본문 대신 **page 주소 3줄**만 주고, 무관하면 아무것도 주입하지 않습니다. 어떤 오류에서도 질문을 막지 않습니다.
 
 설치는 스크립트 하나로 끝납니다. clone 경로는 어디여도 되고, 스크립트가 자기 위치에서 repo root를 찾습니다.
 
@@ -154,7 +155,47 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```bash
 python3 scripts/llmwiki_context.py search "폐기 ICD 코드"   # 후보 page 점수순
 python3 scripts/llmwiki_context.py context "폐기 ICD 코드"  # 실제 주입될 본문
+python3 scripts/llmwiki_context.py get 폐기-icd-코드        # block 목차
+python3 scripts/llmwiki_context.py get 폐기-icd-코드 --block <id>  # 그 block만
 ```
+
+조회는 기본이 목차와 block 단위입니다. page 전체 JSON은 `--mode page`(또는 `llmwiki.py get`)를 명시할 때만 나옵니다.
+
+## 늘 붙는 근거 (선택)
+
+질문마다 앞에 고정으로 붙일 page를 `tools/config/context.json`에 적을 수 있습니다. 매번 알아야 하는 것 — 작업 규칙, 용어 기준 — 을 여기에 둡니다.
+
+```json
+{ "always": ["ai-작업-규칙"], "always_max_bytes": 800 }
+```
+
+검색 점수와 무관하게 늘 나가고, 예산은 검색 몫과 따로 잡아 근거를 밀어내지 않습니다(전체의 절반을 넘지 못합니다). 고정한 page는 검색 결과에서 중복으로 다시 싣지 않습니다. 설정이 없으면 아무것도 고정하지 않습니다.
+
+## 주기 ingest 루틴 (선택)
+
+`raw/`에 새 소스가 들어오면 에이전트가 알아서 위키에 넣도록 걸어 둘 수 있습니다. 설치 중에 물어보고, 답하지 않으면 걸지 않습니다.
+
+```bash
+./scripts/install.sh --ingest-routine claude      # 또는 codex, none
+./scripts/install.sh --routine-interval 1800      # 주기(초, 기본 3600)
+python3 scripts/llmwiki_routine.py status         # 등록 상태와 마지막 실행
+python3 scripts/llmwiki_routine.py run --dry-run  # 무엇을 할지만 본다
+```
+
+한 번 돌 때의 순서는 **git pull → 미처리 확인 → ingest → build·validate → 커밋 → push**입니다. 미처리 소스가 없으면 에이전트를 아예 부르지 않고, 미처리 목록이 지난번과 같으면(에이전트가 이미 보고 판단한 것이면) 건너뜁니다. `raw/.llmwikiignore`로 소스가 아닌 파일을 제외할 수 있습니다. 워킹트리가 더럽거나 히스토리가 갈라졌으면 pull 단계에서 멈추고 아무것도 커밋하지 않습니다. 스케줄러는 OS에 맞춰 launchd·cron·schtasks를 씁니다.
+
+## 개인 저장소로 밀어 올리기 (선택)
+
+이 clone은 **코드 갱신을 받는 자리**로 두고, 자기 위키는 개인 private 저장소로 밀어 올릴 수 있습니다. `origin`은 건드리지 않고 remote 하나만 더 붙입니다.
+
+```bash
+./scripts/install.sh --private-remote git@github.com:me/my-wiki.git   # 이미 만든 저장소
+./scripts/install.sh --gh-create my-wiki                              # gh 로 새로 만든다
+./scripts/install.sh update                                           # origin 에서 코드 갱신
+git push private HEAD:main                                            # 위키를 개인 저장소로
+```
+
+이름이 같은 remote가 이미 있으면 덮어쓰지 않고 그대로 둡니다. 루틴을 걸어 두었다면 커밋과 push까지 루틴이 합니다.
 
 설치 옵션·지원 범위·Codex hook 신뢰 절차는 [`docs/install.md`](docs/install.md), 동작 원리와 hook 스키마 차이는 [`docs/context-injection.md`](docs/context-injection.md)에 있습니다.
 

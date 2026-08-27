@@ -116,6 +116,17 @@ def long_flags(text: str) -> set[str]:
     return set(re.findall(r"--[a-z][a-z0-9-]+", text))
 
 
+def accepted_flags(sh: str) -> set[str]:
+    """install.sh 가 *자기 CLI 옵션으로* 받는 것만. 인자 파싱 case 문이 정본이다.
+
+    본문에는 git/python 을 부르는 줄도 있어서(`git merge --ff-only` 등) 파일
+    전체를 긁으면 남의 도구 플래그까지 옵션으로 오인한다.
+    """
+    start = sh.index("while [ $# -gt 0 ]")
+    end = sh.index("\ndone", start)
+    return long_flags(sh[start:end])
+
+
 class ParityTest(unittest.TestCase):
     """두 설치기가 따로 자라나지 않게 묶어 둔다."""
 
@@ -126,11 +137,11 @@ class ParityTest(unittest.TestCase):
     def test_every_posix_option_is_accepted_on_windows(self) -> None:
         # `--python=` 같은 형태까지 같은 이름으로 받아야, 문서 한 벌로 양쪽을
         # 설명할 수 있다.
-        missing = sorted(long_flags(self.sh) - long_flags(self.ps1))
+        missing = sorted(accepted_flags(self.sh) - long_flags(self.ps1))
         self.assertEqual(missing, [], f"install.ps1 이 받지 않는 옵션: {missing}")
 
     def test_every_subcommand_exists_on_both(self) -> None:
-        for command in ("install", "verify", "uninstall", "doctor"):
+        for command in ("install", "verify", "uninstall", "doctor", "update"):
             self.assertIn(command, self.ps1)
             self.assertIn(command, self.sh)
 

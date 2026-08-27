@@ -40,6 +40,7 @@ SCRIPT_DIR=$(resolve_dir "$0")
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." && pwd -P)
 CONTEXT_CLI=$SCRIPT_DIR/llmwiki_context.py
 WIKI_CLI=$SCRIPT_DIR/llmwiki.py
+ROUTINE_CLI=$SCRIPT_DIR/llmwiki_routine.py
 
 # --------------------------------------------------------------- 기본값
 COMMAND=install
@@ -56,6 +57,14 @@ PYTHON_OPT=""
 MCP_NAME=llmwiki
 QMD_NAME=llmwiki_json
 QUIET=0
+# 주기 ingest 루틴과 개인 저장소. 기본은 "묻는다" 이고, 비대화형에서는 건너뛴다.
+ROUTINE=ask
+ROUTINE_INTERVAL=3600
+PRIVATE_URL=""
+GH_CREATE=""
+PRIVATE=ask
+ASK=1
+REMOTE_NAME=private
 
 # 부트스트랩 대상. 저장소 규칙상 package manager 는 Bun 뿐이고 버전은 고정이다
 # (npm/yarn/pnpm 금지). qmd 는 공식 패키지에서만 받는다.
@@ -88,6 +97,7 @@ llmwiki_json 자동 컨텍스트 주입 설치
   verify      설치 상태를 점검한다. 아무것도 바꾸지 않는다.
   uninstall   이 스크립트가 넣은 것만 되돌린다. 남의 설정은 남긴다.
   doctor      감지 결과와 해석된 경로만 출력한다.
+  update      upstream(origin) 에서 코드 갱신만 받아 온다. 개인 위키는 건드리지 않는다.
 
 옵션
   -n, --dry-run       바뀔 내용만 보여주고 아무것도 쓰지 않는다 (네트워크도 안 탄다)
@@ -104,6 +114,17 @@ llmwiki_json 자동 컨텍스트 주입 설치
       --force         미지원 OS 나 미감지 클라이언트에서도 강행한다
   -q, --quiet         진행 로그를 줄인다
   -h, --help          이 도움말
+
+주기 ingest 루틴 — raw/ 에 새 소스가 들어오면 에이전트가 위키에 넣는다
+      --ingest-routine C  C 는 claude · codex · none. 주지 않으면 설치 중에 물어본다
+      --routine-interval S  주기(초, 기본 3600)
+  -y, --yes           대화형 질문을 하지 않는다 (지정하지 않은 것은 건너뛴다)
+
+개인 저장소 — 이 clone 은 update 용으로 두고, 위키는 자기 private 저장소로 민다
+      --private-remote URL  이미 만들어 둔 private 저장소를 remote 로 붙인다
+      --gh-create NAME      gh 로 private 저장소를 새로 만들어 붙인다
+      --no-private          개인 저장소를 붙이지 않는다 (묻지도 않는다)
+      --remote-name N       그 remote 의 이름 (기본 private, origin 은 손대지 않는다)
 
 클라이언트를 지정하지 않으면 설치된 것만 자동으로 고른다.
 
@@ -122,7 +143,7 @@ USAGE
 
 while [ $# -gt 0 ]; do
     case $1 in
-        install | verify | uninstall | doctor) COMMAND=$1 ;;
+        install | verify | uninstall | doctor | update) COMMAND=$1 ;;
         -n | --dry-run) DRY_RUN=1 ;;
         --codex) WANT_CODEX=1 ;;
         --claude) WANT_CLAUDE=1 ;;
@@ -136,6 +157,18 @@ while [ $# -gt 0 ]; do
         --mcp-name) MCP_NAME=${2:?--mcp-name 에 이름이 필요하다}; shift ;;
         --qmd-name) QMD_NAME=${2:?--qmd-name 에 이름이 필요하다}; shift ;;
         --force) FORCE=1 ;;
+        --ingest-routine) ROUTINE=${2:?--ingest-routine 에 claude/codex/none 이 필요하다}; shift ;;
+        --ingest-routine=*) ROUTINE=${1#--ingest-routine=} ;;
+        --routine-interval) ROUTINE_INTERVAL=${2:?--routine-interval 에 초가 필요하다}; shift ;;
+        --routine-interval=*) ROUTINE_INTERVAL=${1#--routine-interval=} ;;
+        --private-remote) PRIVATE_URL=${2:?--private-remote 에 URL 이 필요하다}; PRIVATE=yes; shift ;;
+        --private-remote=*) PRIVATE_URL=${1#--private-remote=}; PRIVATE=yes ;;
+        --gh-create) GH_CREATE=${2:?--gh-create 에 이름이 필요하다}; PRIVATE=yes; shift ;;
+        --gh-create=*) GH_CREATE=${1#--gh-create=}; PRIVATE=yes ;;
+        --no-private) PRIVATE=no ;;
+        --remote-name) REMOTE_NAME=${2:?--remote-name 에 이름이 필요하다}; shift ;;
+        --remote-name=*) REMOTE_NAME=${1#--remote-name=} ;;
+        -y | --yes) ASK=0 ;;
         -q | --quiet) QUIET=1 ;;
         -h | --help) usage; exit 0 ;;
         *) printf 'error: 알 수 없는 인자 %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -794,6 +827,158 @@ install_qmd() {
     fi
 }
 
+# --------------------------------------------------------------- 주기 ingest 루틴
+# 루틴은 raw/ 에 새 소스가 들어왔을 때만 에이전트를 부른다. 매시간 LLM 을
+# 깨우는 것이 목적이 아니므로, 미처리 목록이 지난번과 같으면 그냥 넘어간다.
+ask_line() { # 질문 -> 답 (비대화형이면 빈 값)
+    [ "$ASK" -eq 1 ] || return 0
+    [ -t 0 ] || return 0
+    printf '%s' "$1" >&2
+    IFS= read -r _reply || return 0
+    printf '%s' "$_reply"
+}
+
+routine_choice() {
+    # 플래그로 정해졌으면 묻지 않는다.
+    case $ROUTINE in
+        claude | codex | none) return 0 ;;
+    esac
+    if [ "$ASK" -eq 0 ] || [ ! -t 0 ]; then
+        ROUTINE=none
+        return 0
+    fi
+    say ""
+    say "  raw/ 에 새 소스가 들어오면 에이전트가 자동으로 위키에 넣는 루틴을 걸 수 있다."
+    say "  (git pull -> 미처리 확인 -> ingest -> build/validate -> 커밋 -> push 순서로 돈다)"
+    _options=""
+    if [ "$HAVE_CLAUDE" -eq 1 ]; then _options="claude"; fi
+    if [ "$HAVE_CODEX" -eq 1 ]; then _options="${_options:+$_options/}codex"; fi
+    if [ -z "$_options" ]; then
+        say "  claude 도 codex 도 없다 — 루틴은 건너뛴다."
+        ROUTINE=none
+        return 0
+    fi
+    _answer=$(ask_line "  루틴을 걸까? [$_options/none] (기본 none): ")
+    case $_answer in
+        claude | codex) ROUTINE=$_answer ;;
+        *) ROUTINE=none ;;
+    esac
+}
+
+install_routine() {
+    routine_choice
+    [ "$ROUTINE" = none ] && return 0
+    step "주기 ingest 루틴 ($ROUTINE, ${ROUTINE_INTERVAL}초)"
+    if [ ! -f "$ROUTINE_CLI" ]; then
+        warn "$ROUTINE_CLI 가 없다 — 루틴을 건너뛴다"
+        return 0
+    fi
+    set -- run
+    if [ "$DRY_RUN" -eq 1 ]; then
+        "$PY" "$ROUTINE_CLI" --root "$REPO_ROOT" install --agent "$ROUTINE" \
+            --interval "$ROUTINE_INTERVAL" --python "$PY" --remote "$REMOTE_NAME" --dry-run
+        return 0
+    fi
+    "$PY" "$ROUTINE_CLI" --root "$REPO_ROOT" install --agent "$ROUTINE" \
+        --interval "$ROUTINE_INTERVAL" --python "$PY" --remote "$REMOTE_NAME" ||
+        warn "루틴 등록에 실패했다 — 나머지 설치는 그대로다"
+}
+
+uninstall_routine() {
+    step "주기 ingest 루틴 해제"
+    if [ ! -f "$ROUTINE_CLI" ]; then
+        say "  루틴 스크립트가 없다 — 건너뛴다"
+        return 0
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        "$PY" "$ROUTINE_CLI" uninstall --dry-run
+        return 0
+    fi
+    "$PY" "$ROUTINE_CLI" uninstall || warn "루틴 해제에 실패했다"
+}
+
+# --------------------------------------------------------------- 개인 저장소
+# origin 은 코드 갱신을 받는 자리로 그대로 둔다. 개인 위키는 별도 remote 로만
+# 밀어 올린다. 이미 붙어 있는 remote 는 이름이 같아도 덮어쓰지 않는다.
+private_choice() {
+    case $PRIVATE in
+        yes | no) return 0 ;;
+    esac
+    if [ "$ASK" -eq 0 ] || [ ! -t 0 ]; then
+        PRIVATE=no
+        return 0
+    fi
+    say ""
+    say "  이 clone 은 origin 에서 코드 갱신을 받는 자리로 둔다."
+    say "  자기 위키는 개인 private 저장소로 밀어 올릴 수 있다."
+    _answer=$(ask_line "  개인 private 저장소를 붙일까? [y/N]: ")
+    case $_answer in
+        y | Y | yes | YES) PRIVATE=yes ;;
+        *) PRIVATE=no; return 0 ;;
+    esac
+    _answer=$(ask_line "  이미 만든 저장소 주소가 있으면 붙여 넣어라 (없으면 그냥 Enter): ")
+    if [ -n "$_answer" ]; then
+        PRIVATE_URL=$_answer
+        return 0
+    fi
+    if has gh; then
+        _answer=$(ask_line "  gh 로 새로 만든다. 저장소 이름 (기본 llmwiki-private): ")
+        GH_CREATE=${_answer:-llmwiki-private}
+    else
+        warn "gh 가 없어 새로 만들 수 없다 — 주소를 주거나 gh 를 설치해라"
+        PRIVATE=no
+    fi
+}
+
+install_private_remote() {
+    private_choice
+    [ "$PRIVATE" = yes ] || return 0
+    step "개인 저장소 remote ($REMOTE_NAME)"
+    if [ ! -f "$ROUTINE_CLI" ]; then
+        warn "$ROUTINE_CLI 가 없다 — 건너뛴다"
+        return 0
+    fi
+    set -- git-setup --remote "$REMOTE_NAME"
+    if [ -n "$PRIVATE_URL" ]; then set -- "$@" --url "$PRIVATE_URL"; fi
+    if [ -n "$GH_CREATE" ]; then set -- "$@" --gh-create "$GH_CREATE"; fi
+    if [ "$DRY_RUN" -eq 1 ]; then set -- "$@" --dry-run; fi
+    "$PY" "$ROUTINE_CLI" --root "$REPO_ROOT" "$@" ||
+        warn "개인 저장소 연결에 실패했다 — 나머지 설치는 그대로다"
+}
+
+# --------------------------------------------------------------- update
+do_update() {
+    step "upstream 갱신 (origin)"
+    if [ ! -d "$REPO_ROOT/.git" ]; then
+        die "git 저장소가 아니다: $REPO_ROOT"
+    fi
+    _dirty=$(git -C "$REPO_ROOT" status --porcelain | head -n 5)
+    if [ -n "$_dirty" ]; then
+        warn "커밋되지 않은 변경이 있다 — 먼저 정리하라"
+        printf '%s\n' "$_dirty" | sed 's/^/    /'
+        return 1
+    fi
+    if ! git -C "$REPO_ROOT" remote get-url origin >/dev/null 2>&1; then
+        warn "remote 'origin' 이 없다 — 이 clone 은 upstream 을 가리키고 있지 않다"
+        warn "  붙이려면: git -C $REPO_ROOT remote add origin <upstream 주소>"
+        return 1
+    fi
+    _branch=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)
+    if [ "$DRY_RUN" -eq 1 ]; then
+        plan "git fetch origin && git merge --ff-only origin/$_branch"
+        return 0
+    fi
+    git -C "$REPO_ROOT" fetch origin "$_branch" || return 1
+    if git -C "$REPO_ROOT" merge --ff-only "origin/$_branch"; then
+        say "  최신으로 맞췄다"
+    else
+        warn "ff-only 로 합칠 수 없다 (갈라졌다). 직접 확인하라:"
+        warn "  git -C $REPO_ROOT log --oneline HEAD..origin/$_branch"
+        return 1
+    fi
+    say "  개인 위키를 밀어 올리려면: git push $REMOTE_NAME HEAD:$_branch"
+}
+
 # --------------------------------------------------------------- Codex 신뢰
 codex_trust_notice() {
     if [ "$WANT_CODEX" -eq 0 ]; then return 0; fi
@@ -846,11 +1031,20 @@ case $COMMAND in
         step "해석된 설정"
         "$PY" "$CONTEXT_CLI" doctor
         ;;
+    update)
+        [ -n "$PY" ] || die "Python 3.9 이상이 없다"
+        do_update
+        ;;
     verify)
         report_detection
         [ -n "$PY" ] || die "Python 3.9 이상이 없어 점검할 수 없다 — 먼저 install 을 돌려라"
         step "점검"
-        run_context verify
+        run_context verify || _verify_failed=1
+        if [ -f "$ROUTINE_CLI" ]; then
+            step "주기 ingest 루틴"
+            "$PY" "$ROUTINE_CLI" --root "$REPO_ROOT" status
+        fi
+        [ -z "${_verify_failed-}" ]
         ;;
     install)
         report_detection
@@ -870,6 +1064,8 @@ case $COMMAND in
         install_hooks
         install_mcp
         install_qmd
+        install_private_remote
+        install_routine
         if [ "$DRY_RUN" -eq 1 ]; then
             step "dry-run 종료 — 아무것도 바꾸지 않았다"
             exit 0
@@ -879,12 +1075,14 @@ case $COMMAND in
         run_context verify || true
         step "완료"
         say "  되돌리려면:  $SCRIPT_DIR/install.sh uninstall"
+        say "  코드 갱신:   $SCRIPT_DIR/install.sh update   (origin 에서 받아 온다)"
         ;;
     uninstall)
         report_detection
         [ -n "$PY" ] || die "Python 3.9 이상이 없어 제거를 실행할 수 없다"
         uninstall_hooks
         uninstall_mcp
+        uninstall_routine
         if [ "$WITH_QMD" -eq 1 ]; then
             step "qmd"
             warn "collection 과 받아 온 도구(uv/Bun/qmd)는 자동으로 지우지 않는다."

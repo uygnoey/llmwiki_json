@@ -24,7 +24,7 @@ PATH 환경변수나 시스템 경로를 건드리지 않고, 받은 절대경�
 실행이 막히면 (기본 실행 정책이 스크립트를 거부한다):
     powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 
-사용법:  scripts\install.ps1 [install|verify|uninstall|doctor] [옵션]
+사용법:  scripts\install.ps1 [install|verify|uninstall|doctor|update] [옵션]
 #>
 
 Set-StrictMode -Version Latest
@@ -50,6 +50,7 @@ $ScriptDir  = Resolve-ScriptDir $PSCommandPath
 $RepoRoot   = Convert-Path -LiteralPath (Join-Path $ScriptDir '..')
 $ContextCli = Join-Path $ScriptDir 'llmwiki_context.py'
 $WikiCli    = Join-Path $ScriptDir 'llmwiki.py'
+$RoutineCli = Join-Path $ScriptDir 'llmwiki_routine.py'
 
 # --------------------------------------------------------------- 기본값
 $Command      = 'install'
@@ -63,6 +64,14 @@ $WithGuides   = $true
 $Bootstrap    = $true
 $PythonOpt    = ''
 $McpName      = 'llmwiki'
+# 주기 ingest 루틴과 개인 저장소. 기본은 "묻는다" 이고, 비대화형에서는 건너뛴다.
+$Routine         = 'ask'
+$RoutineInterval = 3600
+$PrivateUrl      = ''
+$GhCreate        = ''
+$Private         = 'ask'
+$Ask             = $true
+$RemoteName      = 'private'
 $QmdName      = 'llmwiki_json'
 $Quiet        = $false
 
@@ -109,6 +118,17 @@ llmwiki_json 자동 컨텍스트 주입 설치 (Windows)
   -q, -Quiet          진행 로그를 줄인다
   -h, -Help           이 도움말
 
+주기 ingest 루틴 — raw\ 에 새 소스가 들어오면 에이전트가 위키에 넣는다
+      --ingest-routine C  C 는 claude · codex · none. 주지 않으면 설치 중에 물어본다
+      --routine-interval S  주기(초, 기본 3600)
+  -y, --yes           대화형 질문을 하지 않는다 (지정하지 않은 것은 건너뛴다)
+
+개인 저장소 — 이 clone 은 update 용으로 두고, 위키는 자기 private 저장소로 민다
+      --private-remote URL  이미 만들어 둔 private 저장소를 remote 로 붙인다
+      --gh-create NAME      gh 로 private 저장소를 새로 만들어 붙인다
+      --no-private          개인 저장소를 붙이지 않는다 (묻지도 않는다)
+      --remote-name N       그 remote 의 이름 (기본 private, origin 은 손대지 않는다)
+
 클라이언트를 지정하지 않으면 설치된 것만 자동으로 고른다.
 
 인터프리터 선택 순서
@@ -141,7 +161,7 @@ while ($i -lt $argv.Count) {
     $value = ''
     if ($i + 1 -lt $argv.Count) { $value = [string]$argv[$i + 1] }
     switch -Regex ($a) {
-        '^(install|verify|uninstall|doctor)$' { $Command = $a }
+        '^(install|verify|uninstall|doctor|update)$' { $Command = $a }
         '^(-n|--dry-run|-DryRun)$'            { $DryRun = $true }
         '^(--codex|-Codex)$'                  { $WantCodex = $true }
         '^(--claude|-Claude)$'                { $WantClaude = $true }
@@ -158,6 +178,23 @@ while ($i -lt $argv.Count) {
         '^(--qmd-name|-QmdName)$'             { if (-not $value) { [Console]::Error.WriteLine("error: $a 에 값이 필요하다"); exit 2 }
                                               $QmdName = $value; $i++ }
         '^(--force|-Force)$'                  { $Force = $true }
+        '^(--ingest-routine|-IngestRoutine)$' { if (-not $value) { [Console]::Error.WriteLine("error: $a 에 값이 필요하다"); exit 2 }
+                                              $Routine = $value; $i++ }
+        '^--ingest-routine=(.+)$'             { $Routine = $Matches[1] }
+        '^(--routine-interval|-RoutineInterval)$' { if (-not $value) { [Console]::Error.WriteLine("error: $a 에 값이 필요하다"); exit 2 }
+                                              $RoutineInterval = [int]$value; $i++ }
+        '^--routine-interval=(.+)$'           { $RoutineInterval = [int]$Matches[1] }
+        '^(--private-remote|-PrivateRemote)$' { if (-not $value) { [Console]::Error.WriteLine("error: $a 에 값이 필요하다"); exit 2 }
+                                              $PrivateUrl = $value; $Private = 'yes'; $i++ }
+        '^--private-remote=(.+)$'             { $PrivateUrl = $Matches[1]; $Private = 'yes' }
+        '^(--gh-create|-GhCreate)$'           { if (-not $value) { [Console]::Error.WriteLine("error: $a 에 값이 필요하다"); exit 2 }
+                                              $GhCreate = $value; $Private = 'yes'; $i++ }
+        '^--gh-create=(.+)$'                  { $GhCreate = $Matches[1]; $Private = 'yes' }
+        '^(--no-private|-NoPrivate)$'         { $Private = 'no' }
+        '^(--remote-name|-RemoteName)$'       { if (-not $value) { [Console]::Error.WriteLine("error: $a 에 값이 필요하다"); exit 2 }
+                                              $RemoteName = $value; $i++ }
+        '^--remote-name=(.+)$'                { $RemoteName = $Matches[1] }
+        '^(-y|--yes|-Yes)$'                   { $Ask = $false }
         '^(-q|--quiet|-Quiet)$'               { $Quiet = $true }
         '^(-h|--help|-Help|-\?)$'             { Show-Usage; exit 0 }
         default {
@@ -790,6 +827,132 @@ print(mod.codex_trust(hooks, mod.installed_group_index(hooks)))
 # --------------------------------------------------------------- 명령 실행
 # 도구를 받아 오는 것은 install 에서만이다. doctor 는 진단, verify 는 점검,
 # uninstall 은 제거 — 어느 쪽도 사용자 기계에 무언가를 설치할 이유가 없다.
+# --------------------------------------------------------------- 주기 ingest 루틴
+# 루틴은 raw\ 에 새 소스가 들어왔을 때만 에이전트를 부른다. 미처리 목록이
+# 지난번과 같으면 그냥 넘어간다 — 매시간 LLM 을 깨우는 것이 목적이 아니다.
+function Read-Answer([string]$Prompt) {
+    if (-not $Ask) { return '' }
+    if ([Console]::IsInputRedirected) { return '' }
+    [Console]::Error.Write($Prompt)
+    return [Console]::In.ReadLine()
+}
+
+function Resolve-RoutineChoice {
+    if ($script:Routine -in @('claude', 'codex', 'none')) { return }
+    if (-not $Ask -or [Console]::IsInputRedirected) { $script:Routine = 'none'; return }
+    Say ''
+    Say '  raw\ 에 새 소스가 들어오면 에이전트가 자동으로 위키에 넣는 루틴을 걸 수 있다.'
+    Say '  (git pull -> 미처리 확인 -> ingest -> build/validate -> 커밋 -> push 순서로 돈다)'
+    $options = @()
+    if ($script:HaveClaude) { $options += 'claude' }
+    if ($script:HaveCodex)  { $options += 'codex' }
+    if ($options.Count -eq 0) {
+        Say '  claude 도 codex 도 없다 — 루틴은 건너뛴다.'
+        $script:Routine = 'none'
+        return
+    }
+    $answer = Read-Answer ("  루틴을 걸까? [" + ($options -join '/') + "/none] (기본 none): ")
+    if ($answer -in @('claude', 'codex')) { $script:Routine = $answer } else { $script:Routine = 'none' }
+}
+
+function Install-Routine {
+    Resolve-RoutineChoice
+    if ($script:Routine -eq 'none') { return }
+    Step "주기 ingest 루틴 ($script:Routine, $RoutineInterval초)"
+    if (-not (Test-Path -LiteralPath $RoutineCli -PathType Leaf)) {
+        Warn "$RoutineCli 가 없다 — 루틴을 건너뛴다"
+        return
+    }
+    $argv = @($RoutineCli, '--root', $RepoRoot, 'install', '--agent', $script:Routine,
+              '--interval', [string]$RoutineInterval, '--python', $Py, '--remote', $RemoteName)
+    if ($DryRun) { $argv += '--dry-run' }
+    & $Py @argv
+    if ($LASTEXITCODE -ne 0) { Warn '루틴 등록에 실패했다 — 나머지 설치는 그대로다' }
+}
+
+function Uninstall-Routine {
+    Step '주기 ingest 루틴 해제'
+    if (-not (Test-Path -LiteralPath $RoutineCli -PathType Leaf)) {
+        Say '  루틴 스크립트가 없다 — 건너뛴다'
+        return
+    }
+    $argv = @($RoutineCli, 'uninstall')
+    if ($DryRun) { $argv += '--dry-run' }
+    & $Py @argv
+    if ($LASTEXITCODE -ne 0) { Warn '루틴 해제에 실패했다' }
+}
+
+# --------------------------------------------------------------- 개인 저장소
+# origin 은 코드 갱신을 받는 자리로 그대로 둔다. 개인 위키는 별도 remote 로만
+# 밀어 올린다. 이미 붙어 있는 remote 는 이름이 같아도 덮어쓰지 않는다.
+function Resolve-PrivateChoice {
+    if ($script:Private -in @('yes', 'no')) { return }
+    if (-not $Ask -or [Console]::IsInputRedirected) { $script:Private = 'no'; return }
+    Say ''
+    Say '  이 clone 은 origin 에서 코드 갱신을 받는 자리로 둔다.'
+    Say '  자기 위키는 개인 private 저장소로 밀어 올릴 수 있다.'
+    $answer = Read-Answer '  개인 private 저장소를 붙일까? [y/N]: '
+    if ($answer -notmatch '^(y|Y|yes|YES)$') { $script:Private = 'no'; return }
+    $script:Private = 'yes'
+    $answer = Read-Answer '  이미 만든 저장소 주소가 있으면 붙여 넣어라 (없으면 그냥 Enter): '
+    if ($answer) { $script:PrivateUrl = $answer; return }
+    if (Has 'gh') {
+        $answer = Read-Answer '  gh 로 새로 만든다. 저장소 이름 (기본 llmwiki-private): '
+        $script:GhCreate = if ($answer) { $answer } else { 'llmwiki-private' }
+    } else {
+        Warn 'gh 가 없어 새로 만들 수 없다 — 주소를 주거나 gh 를 설치해라'
+        $script:Private = 'no'
+    }
+}
+
+function Install-PrivateRemote {
+    Resolve-PrivateChoice
+    if ($script:Private -ne 'yes') { return }
+    Step "개인 저장소 remote ($RemoteName)"
+    if (-not (Test-Path -LiteralPath $RoutineCli -PathType Leaf)) {
+        Warn "$RoutineCli 가 없다 — 건너뛴다"
+        return
+    }
+    $argv = @($RoutineCli, '--root', $RepoRoot, 'git-setup', '--remote', $RemoteName)
+    if ($script:PrivateUrl) { $argv += @('--url', $script:PrivateUrl) }
+    if ($script:GhCreate)   { $argv += @('--gh-create', $script:GhCreate) }
+    if ($DryRun)            { $argv += '--dry-run' }
+    & $Py @argv
+    if ($LASTEXITCODE -ne 0) { Warn '개인 저장소 연결에 실패했다 — 나머지 설치는 그대로다' }
+}
+
+# --------------------------------------------------------------- update
+function Invoke-Update {
+    Step 'upstream 갱신 (origin)'
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot '.git'))) {
+        Die "git 저장소가 아니다: $RepoRoot"
+    }
+    $dirty = & git -C $RepoRoot status --porcelain
+    if ($dirty) {
+        Warn '커밋되지 않은 변경이 있다 — 먼저 정리하라'
+        $dirty | Select-Object -First 5 | ForEach-Object { Say "    $_" }
+        exit 1
+    }
+    & git -C $RepoRoot remote get-url origin 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Warn "remote 'origin' 이 없다 — 이 clone 은 upstream 을 가리키고 있지 않다"
+        Warn "  붙이려면: git -C $RepoRoot remote add origin <upstream 주소>"
+        exit 1
+    }
+    $branch = (& git -C $RepoRoot rev-parse --abbrev-ref HEAD).Trim()
+    if ($DryRun) { Plan "git fetch origin && git merge --ff-only origin/$branch"; return }
+    & git -C $RepoRoot fetch origin $branch
+    if ($LASTEXITCODE -ne 0) { exit 1 }
+    & git -C $RepoRoot merge --ff-only "origin/$branch"
+    if ($LASTEXITCODE -ne 0) {
+        Warn 'ff-only 로 합칠 수 없다 (갈라졌다). 직접 확인하라:'
+        Warn "  git -C $RepoRoot log --oneline HEAD..origin/$branch"
+        exit 1
+    }
+    Say '  최신으로 맞췄다'
+    Say "  개인 위키를 밀어 올리려면: git push $RemoteName HEAD:$branch"
+}
+
 $AllowToolInstall = ($Command -eq 'install')
 
 try {
@@ -798,6 +961,10 @@ try {
     Resolve-Python
 
     switch ($Command) {
+        'update' {
+            if (-not $Py) { Die 'Python 3.9 이상이 없다' }
+            Invoke-Update
+        }
         'doctor' {
             Show-Detection
             if (-not $Py) {
@@ -812,6 +979,10 @@ try {
             if (-not $Py) { Die 'Python 3.9 이상이 없어 점검할 수 없다 — 먼저 install 을 돌려라' }
             Step '점검'
             Invoke-Context @('verify')
+            if (Test-Path -LiteralPath $RoutineCli -PathType Leaf) {
+                Step '주기 ingest 루틴'
+                & $Py $RoutineCli --root $RepoRoot status
+            }
         }
         'install' {
             Show-Detection
@@ -828,18 +999,22 @@ try {
             Install-Hooks
             Install-Mcp
             Install-QmdCollection
+            Install-PrivateRemote
+            Install-Routine
             if ($DryRun) { Step 'dry-run 종료 — 아무것도 바꾸지 않았다'; exit 0 }
             Show-CodexTrustNotice
             Step '확인'
             try { Invoke-Context @('verify') } catch { }
             Step '완료'
             Say "  되돌리려면:  $ScriptDir\install.ps1 uninstall"
+            Say "  코드 갱신:   $ScriptDir\install.ps1 update   (origin 에서 받아 온다)"
         }
         'uninstall' {
             Show-Detection
             if (-not $Py) { Die 'Python 3.9 이상이 없어 제거를 실행할 수 없다' }
             Uninstall-Hooks
             Uninstall-Mcp
+            Uninstall-Routine
             if ($WithQmd) {
                 Step 'qmd'
                 Warn 'collection 과 받아 온 도구(uv/Bun/qmd)는 자동으로 지우지 않는다.'

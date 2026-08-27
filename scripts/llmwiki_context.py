@@ -64,17 +64,64 @@ MAX_BLOCKS = 6
 MAX_BLOCK_CHARS = 320
 WATCHDOG_SECONDS = 6.0
 
-# 주입 판정 문턱. 둘 다 넘어야 주입한다.
+# 주입 판정 문턱. 둘 다 넘어야 본문(block)을 주입한다.
 MIN_SCORE = 6.0
 MIN_COVERAGE = 0.34
 # 정본 점수가 이 구간이면 "약한 신호"로 보고 qmd 후보 탐색을 한 번 시도한다.
 QMD_FLOOR = 1.0
 
+# 커버리지는 질문이 길어질수록 떨어진다. "…답해라. 표로 쓰지 마라." 같은
+# 지시문이 붙으면 정본을 정확히 짚은 질문도 문턱에서 떨어진다. 서로 다른
+# 토큰이 이만큼 한 page 에 맞았다면 그건 우연이 아니므로 커버리지를 면제한다.
+# 점수는 코퍼스 크기(idf)에 따라 커지지만 이 개수는 그렇지 않다.
+MIN_MATCHED = 5
+# 본문 문턱은 못 넘었지만 이만큼은 겹치는 질문에는 본문 대신 "주소만" 준다.
+# 침묵하면 클라이언트는 위키가 있다는 사실조차 모르고 지나간다.
+HINT_SCORE = 2.5
+HINT_COVERAGE = 0.3
+HINT_MATCHED = 4
+HINT_PAGES = 3
+HINT_SUMMARY_CHARS = 110
+
+# 질문과 상관없이 늘 앞에 붙는 page. 이 사람이 일하는 방식처럼 매번 알아야
+# 하는 것을 여기 둔다. 예산은 따로 잡아 검색 결과를 밀어내지 않게 한다.
+ALWAYS_CONFIG = "tools/config/context.json"
+ALWAYS_MAX_BYTES = 800
+ALWAYS_MAX_BLOCKS = 5
+ALWAYS_BLOCK_CHARS = 150
+
+# 조회(get) 기본값. 페이지를 통째로 싣지 않는 것이 기본이다.
+GET_MODES = ("outline", "blocks", "page")
+OUTLINE_CHARS = 120
+META_FIELDS = ("id", "slug", "title", "type", "created", "updated", "projects", "tags",
+               "sources", "raw_ref", "summary", "supersedes", "related", "links", "history")
+
 TOKEN_RE = re.compile(r"[0-9A-Za-z_][0-9A-Za-z_.\-]*|[가-힣]+")
 HANGUL_RE = re.compile(r"^[가-힣]+$")
-SECRET = re.compile(r"(?i)(api[_-]?key|access[_-]?token|password|passwd|secret|connection[_-]?string)"
-                    r"\s*[:=]\s*[^\s,;\"']+")
+# 이름이 붙은 자격증명: `password: x`, `"api_key": "x"`, `--token=x` 등.
+SECRET = re.compile(r"(?i)(api[_-]?key|access[_-]?token|auth[_-]?token|password|passwd|"
+                    r"secret|connection[_-]?string|private[_-]?key|client[_-]?secret|token)"
+                    r"\"?\s*[:=]\s*\"?[^\s,;\"']+")
 SECRET_MASK = r"\1: (접속 정보 생략)"
+
+# 이름 없이 값만 나와도 자격증명인 것들. 위 정규식은 `키: 값` 형태만 잡으므로
+# 헤더·URL·PEM 블록·알려진 토큰 접두는 따로 지운다.
+SECRET_EXTRA = (
+    # Authorization: Bearer …  /  Proxy-Authorization: Basic …
+    (re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._\-+/=]{8,}"), r"\1 (접속 정보 생략)"),
+    # PEM 블록 통째로
+    (re.compile(r"(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----"),
+     "(접속 정보 생략)"),
+    # 널리 쓰이는 토큰 접두 (OpenAI·Anthropic·GitHub·Slack·Google)
+    (re.compile(r"\b(sk-[A-Za-z0-9_\-]{16,}|gh[pousr]_[A-Za-z0-9]{16,}|"
+                r"xox[baprs]-[A-Za-z0-9\-]{10,}|AIza[A-Za-z0-9_\-]{20,})"),
+     "(접속 정보 생략)"),
+    # URL 에 박힌 자격증명 — scheme://user:pass@host
+    (re.compile(r"\b([a-z][a-z0-9+.\-]*://)[^\s/:@]+:[^\s/@]+@"), r"\1(접속 정보 생략)@"),
+    # 공백으로 값을 넘기는 CLI 형태 — `--password hunter2`, `-p hunter2`
+    (re.compile(r"(?i)(--?(?:password|passwd|token|api[_-]?key|secret|auth)\b)\s+\S+"),
+     r"\1 (접속 정보 생략)"),
+)
 
 # 질문에서 신호를 주지 않는 흔한 어휘. 한국어는 조사/어미가 붙은 형태까지 적는다.
 STOPWORDS = {
@@ -129,8 +176,15 @@ def env_flag(name: str, fallback: bool) -> bool:
 
 
 def redact(text: str) -> str:
-    """자격증명처럼 보이는 값은 절대 컨텍스트로 내보내지 않는다."""
-    return SECRET.sub(SECRET_MASK, text)
+    """자격증명처럼 보이는 값은 절대 컨텍스트로 내보내지 않는다.
+
+    이름이 붙은 형태(`password: …`)뿐 아니라 값만 나오는 형태 — 인증 헤더,
+    PEM 블록, 알려진 토큰 접두, URL 에 박힌 계정 — 까지 지운다.
+    """
+    text = SECRET.sub(SECRET_MASK, text)
+    for pattern, mask in SECRET_EXTRA:
+        text = pattern.sub(mask, text)
+    return text
 
 
 def est_tokens(text: str) -> int:
@@ -389,7 +443,8 @@ class Result:
 
 def retrieve(root: Path, query: str, *, limit: int = MAX_PAGES, use_qmd: bool = True,
              collection: str = DEFAULT_QMD_COLLECTION, min_score: float = MIN_SCORE,
-             min_coverage: float = MIN_COVERAGE, qmd_timeout: float = 2.0) -> Result:
+             min_coverage: float = MIN_COVERAGE, qmd_timeout: float = 2.0,
+             min_matched: int = MIN_MATCHED, hint_score: float = HINT_SCORE) -> Result:
     tokens = query_tokens(query)
     docs = load_corpus(root)
     if not tokens:
@@ -428,7 +483,16 @@ def retrieve(root: Path, query: str, *, limit: int = MAX_PAGES, use_qmd: bool = 
 
     if not hits:
         return Result(query, root, [], idf, tokens, 0.0, "no-match")
-    if top < min_score or coverage < min_coverage:
+    # 숫자 하나가 우연히 겹친 것은 신호가 아니다.
+    matched = len(hits[0].matched) if any(not t.isdigit() for t in hits[0].matched) else 0
+    wide = min_matched > 0 and matched >= min_matched
+    if top < min_score or (coverage < min_coverage and not wide):
+        # 본문을 싣기엔 근거가 약하다. 그래도 주소는 안다면 주소만 넘긴다.
+        # 클라이언트는 llmwiki_get 으로 필요한 block 만 집어 오면 된다.
+        if (hint_score > 0 and matched > 0 and top >= hint_score
+                and (coverage >= HINT_COVERAGE or matched >= HINT_MATCHED)):
+            return Result(query, root, hits[:HINT_PAGES], idf, tokens, coverage,
+                          f"hint:{reason}")
         return Result(query, root, [], idf, tokens, coverage, "below-threshold")
     return Result(query, root, hits[:limit], idf, tokens, coverage, reason)
 
@@ -439,7 +503,8 @@ def project_hit(hit: Hit, tokens: list[str], idf: dict[str, float], *,
                 max_block_chars: int = MAX_BLOCK_CHARS) -> dict[str, Any]:
     """주입에 필요한 page/block/field 만 뽑는다. 페이지 전체를 싣지 않는다."""
     page = hit.doc.page
-    blocks = rank_blocks(hit.doc, tokens, idf, max_blocks)
+    # 0 을 달라고 했으면 0 개다. 주소만 넘기는 hint 경로가 이걸 쓴다.
+    blocks = rank_blocks(hit.doc, tokens, idf, max_blocks) if max_blocks > 0 else []
     conflicts = sum(1 for b in (page.get("blocks") or {}).values() if flagged(b))
     return {
         "id": page.get("id"),
@@ -470,7 +535,7 @@ def project_hit(hit: Hit, tokens: list[str], idf: dict[str, float], *,
 
 
 def render(result: Result, pages: list[dict[str, Any]], *, max_bytes: int = MAX_BYTES,
-           max_tokens: int = MAX_TOKENS) -> str:
+           max_tokens: int = MAX_TOKENS, preamble: str = "") -> str:
     """예산 안에서 페이지를 순서대로 채운다. 예산을 넘기면 거기서 멈춘다."""
     if not pages:
         return ""
@@ -481,8 +546,12 @@ def render(result: Result, pages: list[dict[str, Any]], *, max_bytes: int = MAX_
         "`python3 scripts/llmwiki.py build` 로만 갱신한다.",
         "이 근거와 어긋나는 내용을 말하기 전에 해당 page/block 을 직접 확인하라. "
         "근거가 부족하면 모른다고 답하라.",
+        "더 필요하면 `llmwiki_get(selector=\"<slug>\", blocks=[\"<block id>\"])` 로 "
+        "그 block object 만 가져와라. page 전체 JSON 을 통째로 읽지 마라.",
         "",
     ]
+    if preamble:
+        head.extend([preamble, ""])
     tail = "</llmwiki-context>"
     note = "(예산 초과로 {n}개 page 생략 — `llmwiki_context.py search` 로 더 볼 수 있다)"
     fixed = len("\n".join(head).encode("utf-8")) + len(tail.encode("utf-8")) + 2
@@ -547,15 +616,284 @@ def render_page(page: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_hint(result: Result, pages: list[dict[str, Any]], *, max_bytes: int = MAX_BYTES,
+                max_tokens: int = MAX_TOKENS, preamble: str = "") -> str:
+    """본문을 싣기엔 약한 매치. 주소와 가져오는 법만 넘긴다."""
+    if not pages:
+        return ""
+    head = [
+        "<llmwiki-context>",
+        f"개인 지식 위키 정본(`{result.root}`)에서 이 질문과 **약하게** 겹치는 page 주소만 "
+        "추렸다. 본문은 싣지 않았다 — 아래 page 가 답을 담고 있다고 가정하지 마라.",
+        "필요하면 필요한 부분만 가져와라. page 전체 JSON 을 통째로 읽지 마라:",
+        '  llmwiki_get(selector="<slug>")                        → block 목록(outline)',
+        '  llmwiki_get(selector="<slug>", blocks=["<block id>"])  → 그 block object 만',
+        "",
+    ]
+    if preamble:
+        head.extend([preamble, ""])
+    rows = []
+    for page in pages:
+        meta = f"{page['type']}, updated={page['updated']}"
+        row = f"- {page['id']} ({meta}) — {page['title']}"
+        summary = clip(page["summary"], HINT_SUMMARY_CHARS)
+        if summary:
+            row += f": {summary}"
+        rows.append(row)
+    tail = "</llmwiki-context>"
+    while rows:
+        text = "\n".join(head + rows + [tail])
+        if len(text.encode("utf-8")) <= max_bytes and est_tokens(text) <= max_tokens:
+            return text
+        rows.pop()
+    return ""
+
+
+def render_always_only(root: Path, preamble: str, *, max_bytes: int = MAX_BYTES,
+                       max_tokens: int = MAX_TOKENS) -> str:
+    """검색이 비어도 고정 page 는 나간다 — 그것이 '항상' 의 뜻이다."""
+    if not preamble:
+        return ""
+    text = "\n".join(["<llmwiki-context>", preamble, "</llmwiki-context>"])
+    # 이 경로도 상한을 지킨다. 넘기면 아무것도 내지 않는 편이 낫다.
+    if len(text.encode("utf-8")) > max_bytes or est_tokens(text) > max_tokens:
+        return ""
+    return text
+
+
 def build_context(root: Path, query: str, **options: Any) -> tuple[str, Result, list[dict[str, Any]]]:
     max_bytes = options.pop("max_bytes", MAX_BYTES)
     max_tokens = options.pop("max_tokens", MAX_TOKENS)
     max_blocks = options.pop("max_blocks", MAX_BLOCKS)
     max_block_chars = options.pop("max_block_chars", MAX_BLOCK_CHARS)
+    use_always = options.pop("use_always", True)
+    # 고정 몫에는 자체 상한이 있고(전체의 절반 이내), 그 뒤 render 가 머리말까지
+    # 포함해 전체 예산을 다시 검사한다. 여기서 또 빼면 검색 몫이 두 번 줄어든다.
+    preamble = render_always(root, total=max_bytes) if use_always else ""
     result = retrieve(root, query, **options)
+    if preamble:
+        # 고정으로 이미 실은 page 를 검색 결과로 또 싣지 않는다.
+        pinned = {f"page:{s}".lower() if not s.lower().startswith("page:") else s.lower()
+                  for s in always_slugs(root)}
+        kept = [h for h in result.hits
+                if str(h.doc.page_id).lower() not in pinned
+                and f"page:{h.doc.slug}".lower() not in pinned]
+        if len(kept) != len(result.hits):
+            result = Result(result.query, result.root, kept, result.idf, result.tokens,
+                            result.coverage, result.reason)
+    if result.reason.startswith("hint"):
+        # 주소만 넘기는 경로다. block 을 뽑지 않으므로 예산도 거의 쓰지 않는다.
+        pages = [project_hit(h, result.tokens, result.idf, max_blocks=0,
+                             max_block_chars=max_block_chars) for h in result.hits]
+        text = render_hint(result, pages, max_bytes=max_bytes, max_tokens=max_tokens,
+                           preamble=preamble)
+        return (text or render_always_only(root, preamble, max_bytes=max_bytes,
+                                           max_tokens=max_tokens), result, pages)
     pages = [project_hit(h, result.tokens, result.idf, max_blocks=max_blocks,
                          max_block_chars=max_block_chars) for h in result.hits]
-    return render(result, pages, max_bytes=max_bytes, max_tokens=max_tokens), result, pages
+    text = render(result, pages, max_bytes=max_bytes, max_tokens=max_tokens,
+                  preamble=preamble)
+    return (text or render_always_only(root, preamble, max_bytes=max_bytes,
+                                       max_tokens=max_tokens), result, pages)
+
+
+# --------------------------------------------------------------------------- always
+def always_slugs(root: Path) -> list[str]:
+    """`tools/config/context.json` 의 always 목록. 없으면 아무것도 고정하지 않는다."""
+    try:
+        value = json.loads((root / ALWAYS_CONFIG).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    items = value.get("always") if isinstance(value, dict) else None
+    return [str(x) for x in items if str(x).strip()] if isinstance(items, list) else []
+
+
+def always_budget(root: Path, *, total: int = MAX_BYTES) -> int:
+    """고정 몫. 설정이 아무리 크게 잡혀 있어도 전체의 절반을 넘지 않는다."""
+    ceiling = max(1, total // 2)
+    try:
+        value = json.loads((root / ALWAYS_CONFIG).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return min(ALWAYS_MAX_BYTES, ceiling)
+    limit = value.get("always_max_bytes") if isinstance(value, dict) else None
+    wanted = int(limit) if isinstance(limit, int) and limit > 0 else ALWAYS_MAX_BYTES
+    return min(wanted, ceiling)
+
+
+def render_always(root: Path, *, max_bytes: int | None = None,
+                  max_blocks: int = ALWAYS_MAX_BLOCKS, total: int = MAX_BYTES) -> str:
+    """고정 page 를 짧게. 요약과 앞쪽 block 몇 줄만 싣고 나머지는 검색에 맡긴다."""
+    slugs = always_slugs(root)
+    if not slugs:
+        return ""
+    budget = always_budget(root, total=total) if max_bytes is None else max_bytes
+    lines: list[str] = []
+    for slug in slugs:
+        doc = find_doc(root, slug)
+        if doc is None:
+            continue
+        page = doc.page
+        lines.append(f"- {page.get('id')} — {norm(page.get('title'))}")
+        summary = clip(redact(norm(page.get("summary"))), 200)
+        blocks = page.get("blocks") or {}
+        order = [b for b in (page.get("block_order") or list(blocks)) if b in blocks]
+        body: list[str] = []
+        for block_id in order:
+            block = blocks[block_id]
+            if block.get("kind") in SKIP_KINDS:
+                continue
+            text = clip(redact(block_text(block)), ALWAYS_BLOCK_CHARS)
+            if text:
+                body.append(text)
+            if len(body) >= max_blocks:
+                break
+        # summary 는 대개 본문 앞머리를 그대로 옮겨 놓은 것이다. 둘 다 실으면
+        # 좁은 예산에 같은 말이 두 번 들어간다. 목록 기호·공백 차이로 중복을
+        # 놓치지 않도록 글자만 남겨 비교한다.
+        def bare(value: str) -> str:
+            return re.sub(r"[^0-9A-Za-z가-힣]", "", value)
+
+        squashed = bare(" ".join(body))
+        if summary and bare(summary)[:30] not in squashed:
+            lines.append(f"  {summary}")
+        lines.extend(f"  · {text}" for text in body)
+    if not lines:
+        return ""
+    head = "이 사람과 일하는 방식이다. 매 질문에 함께 붙는다:"
+    while lines:
+        text = "\n".join([head, *lines])
+        if len(text.encode("utf-8")) <= budget:
+            return text
+        lines.pop()
+    return ""
+
+
+# --------------------------------------------------------------------------- get
+def find_doc(root: Path, selector: str) -> Doc | None:
+    """slug · page id · block id · 제목 중 무엇으로 불러도 같은 page 를 찾는다."""
+    want = str(selector or "").strip()
+    if not want:
+        return None
+    if "#" in want:
+        want = want.split("#", 1)[0].strip()
+    if want.startswith("block:"):
+        # block:<slug>:<fingerprint>:<n> — slug 는 kebab 이라 ':' 를 담지 않는다.
+        parts = want.split(":")
+        want = parts[1] if len(parts) > 1 else ""
+    if want.startswith("page:"):
+        want = want[5:]
+    key = want.lower()
+    for doc in load_corpus(root):
+        if key in {doc.slug.lower(), doc.page_id.lower(), f"page:{doc.slug}".lower(),
+                   norm(doc.page.get("title")).lower()}:
+            return doc
+    return None
+
+
+def selector_block(selector: str) -> str:
+    """`slug#block-id` 또는 block id 를 통째로 준 경우의 block 부분."""
+    want = str(selector or "").strip()
+    if "#" in want:
+        return want.split("#", 1)[1].strip()
+    return want if want.startswith("block:") else ""
+
+
+def resolve_blocks(page: dict[str, Any],
+                   wanted: Iterable[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    """block id 를 해석한다. 꼬리만 준 축약형(`meta`)도 받는다."""
+    blocks = page.get("blocks") or {}
+    order = [b for b in (page.get("block_order") or list(blocks)) if b in blocks]
+    found: list[dict[str, Any]] = []
+    missing: list[str] = []
+    seen: set[str] = set()
+    for raw in wanted:
+        key = str(raw or "").strip()
+        if not key:
+            continue
+        hit = key if key in blocks else next(
+            (b for b in order if b.endswith(f":{key}") or b.split(":")[-1] == key), "")
+        if not hit:
+            missing.append(key)
+            continue
+        if hit not in seen:
+            seen.add(hit)
+            found.append(blocks[hit])
+    return found, missing
+
+
+def block_view(block: dict[str, Any]) -> dict[str, Any]:
+    """block object 하나. 정본 그대로이되 비밀만 지운다."""
+    view = json.loads(redact(json.dumps(block, ensure_ascii=False)))
+    view["conflict"] = flagged(block)
+    return view
+
+
+def page_meta(page: dict[str, Any], fields: Iterable[str] | None = None) -> dict[str, Any]:
+    keys = [f for f in (fields or META_FIELDS) if f in META_FIELDS]
+    out: dict[str, Any] = {}
+    for key in keys or list(META_FIELDS):
+        if key not in page:
+            continue
+        value = page[key]
+        if key in {"links", "history"} and not fields:
+            continue  # 명시적으로 부르지 않으면 싣지 않는다.
+        out[key] = json.loads(redact(json.dumps(value, ensure_ascii=False))) \
+            if isinstance(value, (dict, list)) else redact(norm(value))
+    return out
+
+
+def page_outline(page: dict[str, Any], *, block_chars: int = OUTLINE_CHARS,
+                 fields: Iterable[str] | None = None) -> dict[str, Any]:
+    """page 의 목차. block 본문 대신 어떤 block 이 어디 있는지만 보여준다."""
+    blocks = page.get("blocks") or {}
+    order = [b for b in (page.get("block_order") or list(blocks)) if b in blocks]
+    rows = []
+    for block_id in order:
+        block = blocks[block_id]
+        row: dict[str, Any] = {
+            "id": block_id,
+            "kind": block.get("kind"),
+            "preview": clip(redact(block_text(block)), block_chars),
+        }
+        if block.get("refs"):
+            row["refs"] = list(block["refs"])
+        if block.get("kind") == "conflict":
+            row["resolution"] = (block.get("resolution") or {}).get("status", "unresolved")
+        if flagged(block):
+            row["conflict"] = True
+        rows.append(row)
+    return {**page_meta(page, fields), "block_count": len(rows), "blocks": rows}
+
+
+def get_page(root: Path, selector: str, *, mode: str = "outline",
+             blocks: Iterable[str] | None = None, fields: Iterable[str] | None = None,
+             block_chars: int = OUTLINE_CHARS) -> dict[str, Any]:
+    """조회의 단일 진입점. 기본은 page 전체가 아니라 목차다."""
+    if mode not in GET_MODES:
+        return {"error": f"unknown mode: {mode}", "modes": list(GET_MODES)}
+    doc = find_doc(root, selector)
+    if doc is None:
+        return {"error": f"page 없음: {selector}"}
+    wanted = [b for b in (blocks or []) if str(b).strip()]
+    inline = selector_block(selector)
+    if inline:
+        wanted = [inline, *wanted]
+    if wanted and mode == "outline":
+        mode = "blocks"  # block 을 지목했으면 그 block 을 달라는 뜻이다.
+    if mode == "page":
+        return json.loads(redact(json.dumps(doc.page, ensure_ascii=False)))
+    if mode == "blocks":
+        if not wanted:
+            return {"error": "mode=blocks 에는 blocks 가 필요하다",
+                    "hint": f"llmwiki_get(selector=\"{doc.slug}\") 로 block 목록을 먼저 봐라"}
+        found, missing = resolve_blocks(doc.page, wanted)
+        out: dict[str, Any] = {"id": doc.page_id, "slug": doc.slug,
+                               "title": norm(doc.page.get("title")), "file": doc.rel,
+                               "blocks": [block_view(b) for b in found]}
+        if missing:
+            out["missing"] = missing
+        return out
+    return {**page_outline(doc.page, block_chars=block_chars, fields=fields), "file": doc.rel}
 
 
 # --------------------------------------------------------------------------- hook
@@ -659,12 +997,23 @@ MCP_TOOLS = [
     },
     {
         "name": "llmwiki_get",
-        "description": "page slug 또는 page id 로 정본 page 를 읽는다. block 을 주면 그 block 만 돌려준다 (읽기 전용).",
+        "description": (
+            "정본 page 를 필요한 만큼만 읽는다 (읽기 전용). 기본은 page 전체가 아니라 "
+            "block 목차(outline)다. 목차에서 필요한 block id 를 골라 blocks 로 다시 부르면 "
+            "그 block object 만 돌려준다. page 전체 JSON 은 mode=\"page\" 를 명시할 때만 "
+            "나가며, 보통은 필요 없다."),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "selector": {"type": "string", "description": "slug 또는 page:slug"},
-                "block": {"type": "string", "description": "block id (선택)"},
+                "selector": {"type": "string",
+                             "description": "slug · page:slug · 제목 · slug#block-id · block id"},
+                "blocks": {"type": "array", "items": {"type": "string"},
+                           "description": "가져올 block id 들. 꼬리만 준 축약형도 받는다."},
+                "fields": {"type": "array", "items": {"type": "string"},
+                           "description": f"실을 page 필드. 가능: {', '.join(META_FIELDS)}"},
+                "mode": {"type": "string", "enum": list(GET_MODES),
+                         "description": "outline(기본) · blocks · page(통째로, 비쌈)"},
+                "block": {"type": "string", "description": "blocks 의 단수형 (하위 호환)"},
             },
             "required": ["selector"],
         },
@@ -688,19 +1037,13 @@ def mcp_call(root: Path, name: str, args: dict[str, Any]) -> str:
                                             max_bytes=int(args.get("max_bytes") or MAX_BYTES))
         return text or f"(관련 근거 없음 — {result.reason})"
     if name == "llmwiki_get":
-        selector = str(args.get("selector", "")).strip()
-        wanted = selector[5:] if selector.startswith("page:") else selector
-        for doc in load_corpus(root):
-            if doc.slug != wanted and doc.page_id != selector:
-                continue
-            block_id = args.get("block")
-            if block_id:
-                block = (doc.page.get("blocks") or {}).get(str(block_id))
-                if not block:
-                    return f"(block 없음: {block_id})"
-                return redact(json.dumps(block, ensure_ascii=False, indent=2))
-            return redact(json.dumps(doc.page, ensure_ascii=False, indent=2))
-        return f"(page 없음: {selector})"
+        blocks = list(args.get("blocks") or [])
+        if args.get("block"):
+            blocks.append(str(args["block"]))
+        payload = get_page(root, str(args.get("selector", "")),
+                           mode=str(args.get("mode") or "outline"),
+                           blocks=blocks, fields=args.get("fields"))
+        return json.dumps(payload, ensure_ascii=False, indent=2)
     return f"(알 수 없는 도구: {name})"
 
 
@@ -937,9 +1280,16 @@ def guide_body(root: Path, python: str | None = None) -> str:
         f"`{interpreter} {wiki_cli} build` 로만 갱신한다. "
         "`raw/` 는 수정하지 않는다.",
         "- 질문마다 `UserPromptSubmit` hook 이 관련 근거를 `<llmwiki-context>` 블록으로 "
-        "자동 주입한다. 그 안의 page/block ID 를 근거로 답하고, 필요하면 원문을 직접 확인한다.",
-        f"- 더 찾아야 하면 `{interpreter} {script} search \"<질문>\"` 또는 "
-        f"`{interpreter} {wiki_cli} get <slug>` 를 쓴다.",
+        "자동 주입한다. 그 안의 page/block ID 를 근거로 답한다. 주소만 온 경우도 있는데, "
+        "그때는 본문이 실리지 않았다는 뜻이니 아래 조회로 필요한 block 만 가져온다.",
+        "- 조회는 언제나 **필요한 object 단위**로 한다. page 전체 JSON 을 통째로 읽지 않는다:",
+        f"  - block 목차: `{interpreter} {script} get <slug>`",
+        f"  - block 하나: `{interpreter} {script} get <slug> --block <block id>`",
+        f"  - 더 찾기: `{interpreter} {script} search \"<질문>\"`",
+        "  - MCP 를 쓸 수 있으면 `llmwiki_get(selector, blocks=[...])` / `llmwiki_search` 가 "
+        "같은 일을 한다.",
+        f"- page 전체가 정말 필요할 때만 `{interpreter} {script} get <slug> --mode page` "
+        f"또는 `{interpreter} {wiki_cli} get <slug>` 를 쓴다. 보통은 필요 없다.",
         "- 주입된 근거와 어긋나는 주장을 하기 전에 반드시 해당 page 를 다시 읽는다. "
         "`⚠️` 로 표시된 상충은 판정 전까지 양쪽을 병기한다.",
     ])
@@ -1163,6 +1513,17 @@ def build_parser() -> argparse.ArgumentParser:
     hook.add_argument("--collection", default=os.environ.get(ENV_QMD_COLLECTION,
                                                              DEFAULT_QMD_COLLECTION))
 
+    get = sub.add_parser("get", help="page 를 필요한 만큼만 읽는다 (기본: block 목차)")
+    get.add_argument("selector", help="slug · page:slug · 제목 · slug#block-id · block id")
+    get.add_argument("--block", action="append", default=[], dest="blocks",
+                     help="가져올 block id (반복 가능, 꼬리만 준 축약형도 된다)")
+    get.add_argument("--field", action="append", default=[], dest="fields",
+                     help=f"실을 page 필드 (반복 가능). 가능: {', '.join(META_FIELDS)}")
+    get.add_argument("--mode", choices=list(GET_MODES), default="outline",
+                     help="outline(기본) · blocks · page(통째로, 비쌈)")
+    get.add_argument("--preview-chars", type=int, default=OUTLINE_CHARS,
+                     help="outline 에서 block 미리보기 길이")
+
     sub.add_parser("mcp", help="읽기 전용 MCP 서버 (stdio)")
     sub.add_parser("doctor", help="해석된 경로와 설정을 점검")
 
@@ -1224,6 +1585,12 @@ def run(argv: list[str] | None = None) -> int:
         if out:
             sys.stdout.write(out)
         return 0
+
+    if args.command == "get":
+        payload = get_page(root, args.selector, mode=args.mode, blocks=args.blocks,
+                           fields=args.fields, block_chars=args.preview_chars)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 1 if payload.get("error") else 0
 
     if args.command == "mcp":
         return mcp_serve(root)

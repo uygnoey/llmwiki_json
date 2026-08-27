@@ -104,6 +104,22 @@ class RetrievalTest(ContextCase):
                               use_qmd=False)
         self.assertEqual(result.hits[0].doc.page_id, "page:golden-set")
 
+    def test_a_long_instruction_does_not_starve_the_answer(self) -> None:
+        # 커버리지는 질문이 길수록 떨어진다. 정본을 정확히 짚은 질문이 뒤에 붙은
+        # 지시문 때문에 통째로 버려지면 안 된다 (실사용에서 이걸로 주입이 끊겼다).
+        short = "폐기 ICD 코드 324건 중 Condition 도달과 Observation 전용은 각각 몇 건이야?"
+        long = (short + " 근거 page id 와 block id 를 붙여 3줄 이내로 답해라. "
+                "표로 정리하지 말고 문장으로만 써라. 마지막에 확신도를 적어라. "
+                "추측이면 추측이라고 밝히고, 모르면 모른다고 답해라. "
+                "출처가 여러 개면 최신 것을 먼저 적어라.")
+        self.assertEqual(ctx.retrieve(self.root_path, short, use_qmd=False).reason, "canonical")
+        result = ctx.retrieve(self.root_path, long, use_qmd=False)
+        self.assertEqual(result.reason, "canonical")
+        self.assertEqual(result.hits[0].doc.page_id, "page:폐기-icd-코드")
+        self.assertLess(result.coverage, ctx.MIN_COVERAGE,
+                        "커버리지 문턱을 넘어서가 아니라 매치 개수로 통과해야 하는 케이스다")
+        self.assertGreaterEqual(len(result.hits[0].matched), ctx.MIN_MATCHED)
+
     def test_unrelated_question_injects_nothing(self) -> None:
         text, result, pages = self.build("파스타 삶는 법 알려줘")
         self.assertEqual(text, "")
@@ -192,6 +208,213 @@ class ProjectionTest(ContextCase):
         self.assertNotIn("history", pages[0])
         self.assertNotIn("links", pages[0])
         self.assertNotIn("block_order", pages[0])
+
+
+# --------------------------------------------------------------------------- 고정 주입
+class AlwaysTest(WorkspaceCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.root_path = Path(self.root).resolve()
+        self.write_pages([make_page(
+            "ai-작업-규칙",
+            "# AI 작업 규칙\n\n- 한국어로 답한다.\n- page 통짜 대신 block 만 집는다.\n",
+            type="concept", projects=["공통"], summary="이 사람과 일하는 방식.")])
+        self.write_pages([make_page("폐기-icd-코드", "# 폐기 ICD 코드\n\n324건이다.\n",
+                                    type="concept", projects=["beta"])], name="other.json")
+
+    def pin(self, *slugs: str, budget: int = 800) -> None:
+        path = self.root_path / ctx.ALWAYS_CONFIG
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"always": list(slugs), "always_max_bytes": budget},
+                                   ensure_ascii=False), encoding="utf-8")
+
+    def build(self, query: str) -> str:
+        return ctx.build_context(self.root_path, query, use_qmd=False)[0]
+
+    def test_without_config_nothing_is_pinned(self) -> None:
+        self.assertEqual(ctx.render_always(self.root_path), "")
+
+    def test_a_pinned_page_rides_along_with_an_unrelated_question(self) -> None:
+        self.pin("ai-작업-규칙")
+        text = self.build("파스타 삶는 법 알려줘")
+        self.assertIn("page:ai-작업-규칙", text)
+        self.assertIn("한국어로 답한다", text)
+
+    def test_a_pinned_page_is_not_repeated_by_the_search(self) -> None:
+        self.pin("ai-작업-규칙")
+        text = self.build("AI 작업 규칙에서 조회는 어떻게 하라고 했지?")
+        self.assertEqual(text.count("page:ai-작업-규칙"), 1)
+
+    def test_pinning_does_not_crowd_out_the_search_result(self) -> None:
+        self.pin("ai-작업-규칙")
+        text = self.build("폐기 ICD 코드는 몇 건인가요?")
+        self.assertIn("page:ai-작업-규칙", text)
+        self.assertIn("page:폐기-icd-코드", text)
+
+    def test_the_pinned_share_cannot_swallow_the_whole_budget(self) -> None:
+        # 설정이 크게 잡혀 있어도 검색 몫이 남아야 한다.
+        self.pin("ai-작업-규칙", budget=100000)
+        preamble = ctx.render_always(self.root_path, total=1000)
+        self.assertLessEqual(len(preamble.encode("utf-8")), 500)
+
+    def test_the_always_only_path_respects_the_cap(self) -> None:
+        self.pin("ai-작업-규칙")
+        preamble = ctx.render_always(self.root_path)
+        self.assertEqual(ctx.render_always_only(self.root_path, preamble, max_bytes=10), "")
+
+    def test_the_pinned_budget_is_respected(self) -> None:
+        self.pin("ai-작업-규칙", budget=120)
+        self.assertLessEqual(len(ctx.render_always(self.root_path).encode("utf-8")), 120)
+
+    def test_a_missing_pinned_page_is_not_an_error(self) -> None:
+        self.pin("없는-page")
+        self.assertEqual(ctx.render_always(self.root_path), "")
+        self.assertEqual(self.build("파스타 삶는 법"), "")
+
+    def test_pinning_can_be_turned_off_per_call(self) -> None:
+        self.pin("ai-작업-규칙")
+        text = ctx.build_context(self.root_path, "파스타 삶는 법", use_qmd=False,
+                                 use_always=False)[0]
+        self.assertEqual(text, "")
+
+    def test_the_hook_carries_the_pinned_page(self) -> None:
+        self.pin("ai-작업-규칙")
+        payload = json.dumps({"prompt": "파스타 삶는 법", "cwd": "/tmp",
+                              "hook_event_name": "UserPromptSubmit"}, ensure_ascii=False)
+        out, stats = ctx.run_hook(self.root_path, payload, use_qmd=False,
+                                  max_bytes=ctx.MAX_BYTES, max_tokens=ctx.MAX_TOKENS,
+                                  max_pages=ctx.MAX_PAGES, collection="none")
+        self.assertTrue(stats["injected"])
+        self.assertIn("ai-작업-규칙", out)
+
+# --------------------------------------------------------------------------- hint
+class HintTest(ContextCase):
+    """본문 문턱은 못 넘었지만 짚이는 데는 있는 질문에는 주소만 넘긴다."""
+
+    def weak(self, query: str) -> tuple[str, object, list[dict]]:
+        # 본문 문턱을 인위적으로 올려 '약한 매치' 상태를 만든다.
+        return self.build(query, min_score=1000.0)
+
+    def test_weak_match_ships_addresses_instead_of_silence(self) -> None:
+        text, result, pages = self.weak("폐기 코드 이야기 좀 하자")
+        self.assertTrue(result.reason.startswith("hint"))
+        self.assertIn("page:폐기-icd-코드", text)
+        self.assertTrue(pages)
+
+    def test_hint_carries_no_block_text(self) -> None:
+        text, _, pages = self.weak("폐기 코드 이야기 좀 하자")
+        self.assertEqual([p["blocks"] for p in pages], [[] for _ in pages])
+        self.assertNotIn("324건", text)
+
+    def test_hint_tells_the_client_how_to_fetch_one_block(self) -> None:
+        text, _, _ = self.weak("폐기 코드 이야기 좀 하자")
+        self.assertIn("llmwiki_get", text)
+        self.assertIn("통째로 읽지 마라", text)
+
+    def test_hint_stays_small(self) -> None:
+        text, _, _ = self.weak("폐기 코드 이야기 좀 하자")
+        self.assertLessEqual(len(text.encode("utf-8")), 1400)
+
+    def test_unrelated_question_gets_no_hint_either(self) -> None:
+        text, result, _ = self.weak("파스타 삶는 법 알려줘")
+        self.assertEqual(text, "")
+        self.assertNotIn("hint", result.reason)
+
+    def test_a_stray_number_is_not_a_signal(self) -> None:
+        # 본문에 우연히 같은 숫자가 있다고 해서 주소를 흘리지 않는다.
+        text, result, _ = self.weak("zzqq xxyy vvww 324")
+        self.assertEqual(text, "")
+        self.assertNotIn("hint", result.reason)
+
+    def test_strong_match_still_ships_blocks(self) -> None:
+        text, result, pages = self.build("폐기 ICD 코드는 몇 건인가요?")
+        self.assertEqual(result.reason, "canonical")
+        self.assertTrue(pages[0]["blocks"])
+        self.assertIn("324", text)
+
+
+# --------------------------------------------------------------------------- get
+class GetTest(ContextCase):
+    """조회는 언제나 필요한 object 단위. page 통짜는 명시할 때만."""
+
+    def outline(self, selector: str = "폐기-icd-코드", **kwargs: object) -> dict:
+        return ctx.get_page(self.root_path, selector, **kwargs)
+
+    def test_default_is_an_outline_not_the_page(self) -> None:
+        out = self.outline()
+        self.assertEqual(out["id"], "page:폐기-icd-코드")
+        self.assertEqual(out["block_count"], len(out["blocks"]))
+        self.assertTrue(all(set(row) <= {"id", "kind", "preview", "refs", "resolution",
+                                         "conflict"} for row in out["blocks"]))
+
+    def test_outline_is_far_smaller_than_the_page(self) -> None:
+        whole = json.dumps(self.outline(mode="page"), ensure_ascii=False)
+        outline = json.dumps(self.outline(), ensure_ascii=False)
+        self.assertLess(len(outline), len(whole) / 2)
+
+    def test_named_block_comes_back_whole(self) -> None:
+        block_id = self.outline()["blocks"][1]["id"]
+        out = self.outline(blocks=[block_id])
+        self.assertEqual([b["id"] for b in out["blocks"]], [block_id])
+        self.assertIn("data", out["blocks"][0])
+
+    def test_several_blocks_come_back_in_the_order_asked(self) -> None:
+        ids = [row["id"] for row in self.outline()["blocks"][1:4]]
+        out = self.outline(blocks=list(reversed(ids)))
+        self.assertEqual([b["id"] for b in out["blocks"]], list(reversed(ids)))
+
+    def test_block_id_tail_is_enough(self) -> None:
+        block_id = self.outline()["blocks"][1]["id"]
+        out = self.outline(blocks=[block_id.split(":", 2)[-1]])
+        self.assertEqual([b["id"] for b in out["blocks"]], [block_id])
+
+    def test_selector_can_carry_the_block(self) -> None:
+        block_id = self.outline()["blocks"][1]["id"]
+        out = self.outline(f"폐기-icd-코드#{block_id}")
+        self.assertEqual([b["id"] for b in out["blocks"]], [block_id])
+
+    def test_block_id_alone_resolves_its_page(self) -> None:
+        block_id = self.outline()["blocks"][1]["id"]
+        out = self.outline(block_id)
+        self.assertEqual([b["id"] for b in out["blocks"]], [block_id])
+
+    def test_slug_id_and_title_all_resolve(self) -> None:
+        for selector in ("폐기-icd-코드", "page:폐기-icd-코드", "폐기 ICD 코드"):
+            self.assertEqual(self.outline(selector)["id"], "page:폐기-icd-코드")
+
+    def test_fields_narrow_the_page_header(self) -> None:
+        out = self.outline(fields=["summary"])
+        self.assertEqual(set(out) - {"block_count", "blocks", "file"}, {"summary"})
+
+    def test_missing_block_is_reported_not_raised(self) -> None:
+        out = self.outline(blocks=["block:없는:것"])
+        self.assertEqual(out["missing"], ["block:없는:것"])
+        self.assertEqual(out["blocks"], [])
+
+    def test_missing_page_is_an_error_value(self) -> None:
+        self.assertIn("page 없음", self.outline("nope")["error"])
+
+    def test_unknown_mode_is_an_error_value(self) -> None:
+        self.assertIn("unknown mode", self.outline(mode="everything")["error"])
+
+    def test_credentials_are_masked_in_every_mode(self) -> None:
+        for mode in ("outline", "page"):
+            text = json.dumps(self.outline("배포-메모", mode=mode), ensure_ascii=False)
+            self.assertNotIn("sk-live-should-never-leak", text)
+            self.assertIn("접속 정보 생략", text)
+
+    def test_cli_get_prints_the_same_projection(self) -> None:
+        proc = self.context_cli("get", "폐기-icd-코드")
+        self.assertEqual(json.loads(proc.stdout)["id"], "page:폐기-icd-코드")
+
+    def test_cli_get_block_flag_selects_one_object(self) -> None:
+        block_id = self.outline()["blocks"][1]["id"]
+        proc = self.context_cli("get", "폐기-icd-코드", "--block", block_id)
+        self.assertEqual([b["id"] for b in json.loads(proc.stdout)["blocks"]], [block_id])
+
+    def test_cli_get_reports_a_missing_page_with_a_nonzero_exit(self) -> None:
+        proc = self.context_cli("get", "nope", expect=1)
+        self.assertIn("page 없음", json.loads(proc.stdout)["error"])
 
 
 # --------------------------------------------------------------------------- budget
@@ -350,19 +573,50 @@ class McpTest(ContextCase):
         payload = json.loads(rows[0]["result"]["content"][0]["text"])
         self.assertEqual(payload["results"][0]["id"], "page:폐기-icd-코드")
 
-    def test_get_tool_reads_a_single_page_and_block(self) -> None:
+    def test_get_tool_returns_an_outline_not_the_whole_page(self) -> None:
         rows = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                          "params": {"name": "llmwiki_get",
                                     "arguments": {"selector": "폐기-icd-코드"}}})
         page = json.loads(rows[0]["result"]["content"][0]["text"])
         self.assertEqual(page["id"], "page:폐기-icd-코드")
-        block_id = page["block_order"][1]
+        # 목차는 block 주소와 미리보기만 준다. 정본 block object 는 싣지 않는다.
+        self.assertEqual(page["block_count"], len(page["blocks"]))
+        self.assertTrue(all("data" not in row for row in page["blocks"]))
+        self.assertNotIn("block_order", page)
+
+    def test_get_tool_hands_back_the_named_block_object(self) -> None:
+        rows = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                         "params": {"name": "llmwiki_get",
+                                    "arguments": {"selector": "폐기-icd-코드"}}})
+        block_id = json.loads(rows[0]["result"]["content"][0]["text"])["blocks"][1]["id"]
+        rows = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                         "params": {"name": "llmwiki_get",
+                                    "arguments": {"selector": "폐기-icd-코드",
+                                                  "blocks": [block_id]}}})
+        payload = json.loads(rows[0]["result"]["content"][0]["text"])
+        self.assertEqual([b["id"] for b in payload["blocks"]], [block_id])
+        self.assertIn("data", payload["blocks"][0])
+
+    def test_get_tool_still_accepts_the_singular_block_argument(self) -> None:
+        rows = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                         "params": {"name": "llmwiki_get",
+                                    "arguments": {"selector": "폐기-icd-코드"}}})
+        block_id = json.loads(rows[0]["result"]["content"][0]["text"])["blocks"][1]["id"]
         rows = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                          "params": {"name": "llmwiki_get",
                                     "arguments": {"selector": "폐기-icd-코드",
                                                   "block": block_id}}})
-        block = json.loads(rows[0]["result"]["content"][0]["text"])
-        self.assertEqual(block["id"], block_id)
+        payload = json.loads(rows[0]["result"]["content"][0]["text"])
+        self.assertEqual([b["id"] for b in payload["blocks"]], [block_id])
+
+    def test_get_tool_ships_the_whole_page_only_when_asked(self) -> None:
+        rows = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                         "params": {"name": "llmwiki_get",
+                                    "arguments": {"selector": "폐기-icd-코드",
+                                                  "mode": "page"}}})
+        page = json.loads(rows[0]["result"]["content"][0]["text"])
+        self.assertIn("block_order", page)
+        self.assertIsInstance(page["blocks"], dict)
 
     def test_missing_page_is_reported_not_raised(self) -> None:
         rows = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call",

@@ -39,12 +39,42 @@ page 마다 다음이 실린다.
 `heading` block 은 제목과 중복이라 예산을 쓰지 않는다. 페이지 전체(`history`, `links`,
 `block_order`)는 절대 싣지 않는다.
 
+머리말은 이어서 조회하는 법도 함께 준다 — `llmwiki_get(selector, blocks=[...])` 로 그
+block object 만 가져오고 page 전체 JSON 은 읽지 말라는 지시다.
+
+### 늘 붙는 것 (고정 주입)
+
+`tools/config/context.json` 의 `always` 에 적은 page 는 검색 점수와 상관없이 매 질문에
+붙는다. 이 사람이 일하는 방식처럼 매번 알아야 하는 것을 여기 둔다.
+
+```json
+{ "always": ["ai-작업-규칙"], "always_max_bytes": 800 }
+```
+
+- 예산(`always_max_bytes`, 기본 800B)은 검색 몫과 **따로** 잡는다 — 근거를 밀어내지 않는다
+- 싣는 것은 page 제목·요약과 앞쪽 block 몇 줄뿐이다. 자세한 것은 검색에 맡긴다
+- 고정한 page 가 검색에도 걸리면 중복으로 다시 싣지 않는다
+- 검색이 아무것도 못 찾아도 고정분은 나간다 — 그것이 '항상' 의 뜻이다
+- 설정 파일이 없거나 slug 를 못 찾으면 아무것도 고정하지 않는다
+
+### 주소만 주는 경우 (hint)
+
+본문 문턱은 못 넘었지만 짚이는 page 는 있는 질문에는 **본문 대신 주소만** 준다.
+
+- 조건: 최고 점수 `>= 2.5` · 커버리지 `>= 0.3` · 겹친 토큰이 숫자만은 아닐 것
+- 내용: 상위 3개 page 의 `page id` / `type` / `updated` / 제목 / 요약 110자 + 가져오는 법
+- 크기: 1.5KB 안쪽. block 본문은 한 글자도 싣지 않는다
+- `reason` 은 `hint:canonical` 처럼 원래 경로를 뒤에 남긴다
+
+침묵하면 클라이언트는 위키가 있다는 사실조차 모르고 지나간다. 주소만 주면 필요한 쪽이
+`llmwiki_get` 으로 정확히 집어 올 수 있다. 무관한 질문은 여전히 완전 무주입이다.
+
 ### 안전 장치
 
 | 요구 | 구현 |
 |---|---|
 | 토큰/바이트 상한 | `--max-bytes` 기본 6000, `--max-tokens` 기본 2000. 둘 다 초과 불가(렌더 후 재검증하며 page 를 덜어낸다). 잘린 경우 "예산 초과로 N개 page 생략"을 명시한다 |
-| 낮은 관련도 무주입 | 최고 점수 `< 6.0` 이거나 질문 토큰 커버리지 `< 0.34` 면 빈 출력 |
+| 낮은 관련도 무주입 | 최고 점수 `< 6.0` 이거나 질문 토큰 커버리지 `< 0.34` 면 본문을 싣지 않는다. 그중 점수 `>= 2.5` · 커버리지 `>= 0.3` 인 것만 주소 3줄(hint)로 나가고, 나머지는 빈 출력 |
 | fail-open | stdin 파싱 실패·정본 손상·예외·타임아웃 전부 stdout 없이 `exit 0`. 워치독 6초 |
 | 자격증명 미출력 | 출력 직전 `api_key`/`token`/`password`/`secret` 패턴을 `(접속 정보 생략)` 으로 치환 |
 | 전역 동작 | hook 명령이 인터프리터(`/usr/bin/python3`)와 스크립트를 절대경로로 못박는다. 어느 cwd 에서도 같은 결과 |
@@ -125,7 +155,22 @@ qmd 후보 탐색이 최신 상태가 된다. **정본 검색은 qmd 와 무관�
 
 - `llmwiki_search(query, limit)` — 정본 page 후보를 점수순으로
 - `llmwiki_context(query, max_bytes)` — 주입용 근거 블록을 그대로
-- `llmwiki_get(selector, block)` — page 또는 block 하나
+- `llmwiki_get(selector, blocks, fields, mode)` — **필요한 object 단위** 조회
+
+`llmwiki_get` 의 기본은 page 통짜가 아니라 block 목차(`outline`)다.
+
+| 부르는 법 | 돌아오는 것 |
+|---|---|
+| `llmwiki_get(selector="<slug>")` | 메타 + block 목록(`id`·`kind`·미리보기 120자). 실측 40KB → 8KB |
+| `llmwiki_get(selector, blocks=["<block id>"])` | 그 block object 만 (정본 그대로, 1~2KB) |
+| `llmwiki_get(selector="<slug>#<block id>")` | 위와 같다 — 주소 하나로 쓰는 형태 |
+| `llmwiki_get(selector="<block id>")` | block id 만으로 소속 page 를 찾아 그 block |
+| `llmwiki_get(selector, fields=["summary"])` | 머리말에서 그 필드만 |
+| `llmwiki_get(selector, mode="page")` | page 전체 JSON — **명시할 때만**, 보통은 필요 없다 |
+
+`selector` 는 slug · `page:slug` · 제목 아무거나 받는다. `blocks` 는 hook 이 준 full id 도,
+꼬리만 딴 축약형(`res`)도 받는다. 없는 block 은 예외가 아니라 `missing` 으로 돌아온다.
+같은 일을 CLI 로도 한다 — `llmwiki_context.py get <slug> [--block <id>] [--mode page]`.
 
 MCP 는 보조 수단이고, **자동 주입의 필수 경로는 hook** 이다. MCP 가 꺼져 있어도 주입은 동작한다.
 
@@ -138,6 +183,9 @@ python3 $S doctor                          # 해석된 경로·예산·정본 �
 python3 $S search "폐기 ICD 코드"           # 후보 page 점수순 (JSON)
 python3 $S context "폐기 ICD 코드"          # 실제 주입될 본문
 python3 $S context "질문" --json           # 본문 + 바이트/토큰/projection
+python3 $S get 폐기-icd-코드                # block 목차 (page 통짜가 아니다)
+python3 $S get 폐기-icd-코드 --block res    # 그 block object 만
+python3 $S get 폐기-icd-코드 --mode page    # page 전체 — 필요할 때만
 echo '{"prompt":"질문"}' | python3 $S hook  # hook 출력 그대로
 python3 $S install --dry-run               # 설치될 hook 명령 미리보기
 ```

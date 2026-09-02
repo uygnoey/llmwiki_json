@@ -8,7 +8,7 @@ Karpathy의 LLM Wiki 패턴을 따른다. raw source를 매 질문마다 다시 
 
 - 정본: `wiki/{sources,entities,concepts,syntheses,projects}/**/*.json`
 - 불변 원본: `raw/` (절대 수정하지 않는다)
-- 파생물: `index/*.json`, `viewer/public/data/**`
+- 파생물: `index/*.json`, `index/search.sqlite`(검색 색인), `viewer/public/data/**`
 - 파생물은 `python3 scripts/llmwiki.py build`로만 갱신한다.
 
 ## 개발 규칙
@@ -43,7 +43,7 @@ Karpathy의 LLM Wiki 패턴을 따른다. raw source를 매 질문마다 다시 
 ### Query
 1. `index/routes.json` → `index/catalog.json` → `index/map.json` 순서로 주소를 찾는다.
 2. 필요한 page/block/field만 projection한다.
-3. 모르면 `query` 또는 qmd collection `llmwiki_json`을 사용한다.
+3. 모르면 `query`(또는 MCP `llmwiki_search`)를 사용한다. 검색은 `build`가 굽는 `index/search.sqlite`로 한다.
 
 ### Lint
 미판정 상충, 미존재 링크, 고아 페이지, 잘못된 source ref, 중복 ID, stale map을 점검한다. 수정은 사용자 확인 후 한다.

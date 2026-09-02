@@ -145,16 +145,24 @@ class ParityTest(unittest.TestCase):
             self.assertIn(command, self.ps1)
             self.assertIn(command, self.sh)
 
-    def test_the_pinned_versions_agree(self) -> None:
-        for pattern in (r"BUN_VERSION=([0-9.]+)", r"\$BunVersion\s*=\s*'([0-9.]+)'"):
-            found = re.search(pattern, self.sh + self.ps1)
-            self.assertIsNotNone(found, pattern)
-        self.assertEqual(re.search(r"BUN_VERSION=([0-9.]+)", self.sh).group(1),
-                         re.search(r"\$BunVersion\s*=\s*'([0-9.]+)'", self.ps1).group(1))
+    def test_the_pinned_bun_versions_agree(self) -> None:
+        # viewer 가 쓰는 Bun 은 저장소 규칙(CLAUDE.md)의 1.3.14 로 양쪽이 같아야 한다.
+        sh = re.search(r"BUN_VERSION=([0-9.]+)", self.sh)
+        ps1 = re.search(r"\$BunVersion\s*=\s*'([0-9.]+)'", self.ps1)
+        self.assertIsNotNone(sh)
+        self.assertIsNotNone(ps1)
+        self.assertEqual(sh.group(1), ps1.group(1))
+        self.assertEqual(sh.group(1), "1.3.14")
+        for text in (self.sh, self.ps1):
+            self.assertIn("bun.sh/install", text)
 
-    def test_the_same_qmd_package_and_defaults(self) -> None:
-        for token in ("@tobilu/qmd", "llmwiki_json", "llmwiki"):
-            self.assertIn(token, self.ps1)
+    def test_neither_installer_bootstraps_qmd_any_more(self) -> None:
+        # 검색은 build 가 만드는 sqlite 색인이다 — 설치기는 Python(uv) 과 Bun 만 받아 온다.
+        for text in (self.sh, self.ps1):
+            self.assertNotIn("@tobilu/qmd", text)
+            self.assertNotIn("export-md", text)
+            self.assertNotIn("collection add", text)
+            self.assertIn("search.sqlite", text)
 
     def test_no_repository_path_is_baked_in(self) -> None:
         # 설치기는 어느 clone 에서도 그대로 돌아야 한다.
@@ -167,8 +175,7 @@ class ParityTest(unittest.TestCase):
         self.assertIn("LLMWIKI_STATE_DIR", self.ps1)
 
     def test_it_never_writes_to_the_canonical_wiki(self) -> None:
-        # export-md 만이 index/markdown 을 만든다. wiki/ 쓰기는 없어야 한다.
-        self.assertIn("export-md", self.ps1)
+        # 파생물은 build 만 만든다. wiki/ 쓰기는 없어야 한다.
         for forbidden in ("Set-Content", "Out-File", "WriteAllText"):
             for line in self.ps1.splitlines():
                 if forbidden in line:
@@ -205,7 +212,7 @@ class PowerShellRunTest(unittest.TestCase):
     def test_help_exits_zero_and_lists_the_options(self) -> None:
         result = run_pwsh(["-Help"])
         self.assertEqual(result.returncode, 0, result.stderr)
-        for flag in ("-DryRun", "-NoQmd", "-NoBootstrap", "-NoMcp", "-NoGuides",
+        for flag in ("-DryRun", "-NoBun", "-NoQmd", "-NoBootstrap", "-NoMcp", "-NoGuides",
                      "-Python", "-McpName", "-QmdName", "-Force", "-Quiet"):
             self.assertIn(flag, result.stdout)
 

@@ -63,13 +63,18 @@ CORPUS = [
 
 
 class ContextCase(WorkspaceCase):
+    """이 파일의 in-process 검사는 **최후 스캔 경로**(`use_memory=False`)를 고정한다.
+
+    색인이 없을 때의 기본 폴백은 정본에서 만든 메모리 색인(P/B/E)이고 그쪽은
+    `tests/test_index.py` 가 다룬다. 훅 subprocess 검사는 기본 경로 그대로 돈다.
+    """
     def setUp(self) -> None:
         super().setUp()
         self.write_pages(CORPUS, name="corpus.json")
         self.root_path = Path(self.root).resolve()
 
     def build(self, query: str, **options: object) -> tuple[str, object, list[dict]]:
-        options.setdefault("use_qmd", False)
+        options.setdefault("use_memory", False)
         return ctx.build_context(self.root_path, query, **options)
 
 
@@ -95,13 +100,12 @@ class TokenTest(ContextCase):
 # --------------------------------------------------------------------------- retrieval
 class RetrievalTest(ContextCase):
     def test_korean_question_finds_the_right_page(self) -> None:
-        result = ctx.retrieve(self.root_path, "폐기 ICD 코드는 몇 건인가요?", use_qmd=False)
+        result = ctx.retrieve(self.root_path, "폐기 ICD 코드는 몇 건인가요?")
         self.assertEqual(result.reason, "canonical")
         self.assertEqual(result.hits[0].doc.page_id, "page:폐기-icd-코드")
 
     def test_english_question_finds_the_right_page(self) -> None:
-        result = ctx.retrieve(self.root_path, "what is the golden set for SDTM mapping?",
-                              use_qmd=False)
+        result = ctx.retrieve(self.root_path, "what is the golden set for SDTM mapping?")
         self.assertEqual(result.hits[0].doc.page_id, "page:golden-set")
 
     def test_a_long_instruction_does_not_starve_the_answer(self) -> None:
@@ -112,8 +116,8 @@ class RetrievalTest(ContextCase):
                 "표로 정리하지 말고 문장으로만 써라. 마지막에 확신도를 적어라. "
                 "추측이면 추측이라고 밝히고, 모르면 모른다고 답해라. "
                 "출처가 여러 개면 최신 것을 먼저 적어라.")
-        self.assertEqual(ctx.retrieve(self.root_path, short, use_qmd=False).reason, "canonical")
-        result = ctx.retrieve(self.root_path, long, use_qmd=False)
+        self.assertEqual(ctx.retrieve(self.root_path, short).reason, "canonical")
+        result = ctx.retrieve(self.root_path, long)
         self.assertEqual(result.reason, "canonical")
         self.assertEqual(result.hits[0].doc.page_id, "page:폐기-icd-코드")
         self.assertLess(result.coverage, ctx.MIN_COVERAGE,
@@ -130,34 +134,27 @@ class RetrievalTest(ContextCase):
         _, result, _ = self.build("안녕하세요")
         self.assertEqual(result.reason, "no-content-tokens")
 
-    def test_qmd_is_not_called_for_an_unrelated_question(self) -> None:
-        calls: list[str] = []
-        original = ctx.qmd_slugs
-        ctx.qmd_slugs = lambda *a, **k: calls.append(a[0]) or []  # type: ignore[assignment]
-        self.addCleanup(setattr, ctx, "qmd_slugs", original)
-        ctx.retrieve(self.root_path, "파스타 삶는 법 알려줘", use_qmd=True)
-        self.assertEqual(calls, [])
+    def test_without_an_index_the_memory_index_is_the_default_fallback(self) -> None:
+        text, result, _ = ctx.build_context(self.root_path, "폐기 ICD 코드는 몇 건인가요?")
+        self.assertEqual(result.mode, "memory")
+        self.assertEqual(result.fallback, "no-index")
+        self.assertTrue(text.startswith("<llmwiki-context v=3>"))
 
-    def test_qmd_only_promotes_candidates_and_never_supplies_text(self) -> None:
-        original = ctx.qmd_slugs
-        ctx.qmd_slugs = lambda *a, **k: ["golden-set"]  # type: ignore[assignment]
-        self.addCleanup(setattr, ctx, "qmd_slugs", original)
-        # 정본 점수가 약하게라도 잡히는 질문이어야 qmd 후보 탐색이 돈다.
-        result = ctx.retrieve(self.root_path, "golden 기준 회귀", use_qmd=True,
-                              min_score=1000.0)
-        self.assertIn("qmd", result.reason if result.hits else "canonical+qmd")
-        for hit in result.hits:
-            self.assertEqual(hit.doc.page["slug"], hit.doc.slug)
+    def test_the_scan_path_is_the_last_resort_and_says_so(self) -> None:
+        text, result, _ = self.build("폐기 ICD 코드는 몇 건인가요?")
+        self.assertEqual(result.mode, "scan")
+        self.assertEqual(result.fallback, "no-index;memory-disabled")
+        self.assertTrue(text.startswith("<llmwiki-context>\n"))
 
     def test_broken_shard_is_skipped_instead_of_raising(self) -> None:
         (self.root_path / "wiki" / "concepts" / "broken.json").write_text("{ nope",
                                                                          encoding="utf-8")
-        result = ctx.retrieve(self.root_path, "폐기 ICD 코드", use_qmd=False)
+        result = ctx.retrieve(self.root_path, "폐기 ICD 코드")
         self.assertTrue(result.hits)
 
     def test_empty_corpus_is_not_an_error(self) -> None:
         empty = Path(self.root) / "nowhere"
-        text, result, _ = ctx.build_context(empty, "폐기 ICD 코드", use_qmd=False)
+        text, result, _ = ctx.build_context(empty, "폐기 ICD 코드")
         self.assertEqual(text, "")
         self.assertEqual(result.reason, "empty-corpus")
 
@@ -219,7 +216,7 @@ class AlwaysTest(WorkspaceCase):
             "ai-작업-규칙",
             "# AI 작업 규칙\n\n- 한국어로 답한다.\n- page 통짜 대신 block 만 집는다.\n",
             type="concept", projects=["공통"], summary="이 사람과 일하는 방식.")])
-        self.write_pages([make_page("폐기-icd-코드", "# 폐기 ICD 코드\n\n324건이다.\n",
+        self.write_pages([make_page("폐기-icd-코드", "# 폐기 ICD 코드\n\n폐기 ICD 코드는 324건이다.\n",
                                     type="concept", projects=["beta"])], name="other.json")
 
     def pin(self, *slugs: str, budget: int = 800) -> None:
@@ -229,7 +226,7 @@ class AlwaysTest(WorkspaceCase):
                                    ensure_ascii=False), encoding="utf-8")
 
     def build(self, query: str) -> str:
-        return ctx.build_context(self.root_path, query, use_qmd=False)[0]
+        return ctx.build_context(self.root_path, query)[0]
 
     def test_without_config_nothing_is_pinned(self) -> None:
         self.assertEqual(ctx.render_always(self.root_path), "")
@@ -249,7 +246,7 @@ class AlwaysTest(WorkspaceCase):
         self.pin("ai-작업-규칙")
         text = self.build("폐기 ICD 코드는 몇 건인가요?")
         self.assertIn("page:ai-작업-규칙", text)
-        self.assertIn("page:폐기-icd-코드", text)
+        self.assertIn("폐기-icd-코드", text)
 
     def test_the_pinned_share_cannot_swallow_the_whole_budget(self) -> None:
         # 설정이 크게 잡혀 있어도 검색 몫이 남아야 한다.
@@ -273,17 +270,15 @@ class AlwaysTest(WorkspaceCase):
 
     def test_pinning_can_be_turned_off_per_call(self) -> None:
         self.pin("ai-작업-규칙")
-        text = ctx.build_context(self.root_path, "파스타 삶는 법", use_qmd=False,
-                                 use_always=False)[0]
+        text = ctx.build_context(self.root_path, "파스타 삶는 법", use_always=False)[0]
         self.assertEqual(text, "")
 
     def test_the_hook_carries_the_pinned_page(self) -> None:
         self.pin("ai-작업-규칙")
         payload = json.dumps({"prompt": "파스타 삶는 법", "cwd": "/tmp",
                               "hook_event_name": "UserPromptSubmit"}, ensure_ascii=False)
-        out, stats = ctx.run_hook(self.root_path, payload, use_qmd=False,
-                                  max_bytes=ctx.MAX_BYTES, max_tokens=ctx.MAX_TOKENS,
-                                  max_pages=ctx.MAX_PAGES, collection="none")
+        out, stats = ctx.run_hook(self.root_path, payload,
+                                  max_bytes=ctx.MAX_BYTES, max_tokens=ctx.MAX_TOKENS)
         self.assertTrue(stats["injected"])
         self.assertIn("ai-작업-규칙", out)
 
@@ -451,14 +446,13 @@ class HookTest(ContextCase):
     def hook(self, payload: object, *, raw: str | None = None, cwd: Path | None = None,
              env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         stdin = raw if raw is not None else json.dumps(payload, ensure_ascii=False)
-        return self.context_cli("hook", "--no-qmd", stdin=stdin, cwd=cwd, env=env)
+        return self.context_cli("hook", stdin=stdin, cwd=cwd, env=env)
 
     def test_claude_shaped_input_produces_injectable_output(self) -> None:
         proc = self.hook({**CLAUDE_INPUT, "prompt": "폐기 ICD 코드는 몇 건인가요?"})
         payload = json.loads(proc.stdout)
         self.assertEqual(payload["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit")
-        self.assertIn("page:폐기-icd-코드",
-                      payload["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("폐기-icd-코드", payload["hookSpecificOutput"]["additionalContext"])
 
     def test_codex_shaped_input_produces_schema_valid_output(self) -> None:
         proc = self.hook({**CODEX_INPUT, "prompt": "폐기 ICD 코드는 몇 건인가요?"})
@@ -483,8 +477,9 @@ class HookTest(ContextCase):
                          "")
 
     def test_already_injected_prompt_is_not_reinjected(self) -> None:
-        prompt = "<llmwiki-context>기존</llmwiki-context> 폐기 ICD 코드"
-        self.assertEqual(self.hook({**CLAUDE_INPUT, "prompt": prompt}).stdout, "")
+        for prompt in ("<llmwiki-context>기존</llmwiki-context> 폐기 ICD 코드",
+                       "<llmwiki-context v=3>\nP x</llmwiki-context> 폐기 ICD 코드"):
+            self.assertEqual(self.hook({**CLAUDE_INPUT, "prompt": prompt}).stdout, "", prompt)
 
     def test_malformed_stdin_never_blocks_the_prompt(self) -> None:
         for raw in ("", "   ", "not json", "{", "[]", "null", '"just a string"',
@@ -501,7 +496,7 @@ class HookTest(ContextCase):
     def test_hook_works_from_any_cwd(self) -> None:
         for cwd in (Path("/"), Path("/tmp"), REPO):
             proc = self.hook({**CLAUDE_INPUT, "prompt": "폐기 ICD 코드는 몇 건인가요?"}, cwd=cwd)
-            self.assertIn("page:폐기-icd-코드", proc.stdout, str(cwd))
+            self.assertIn("폐기-icd-코드", proc.stdout, str(cwd))
 
     def test_budget_env_overrides_apply_to_the_hook(self) -> None:
         proc = self.hook({**CLAUDE_INPUT, "prompt": "폐기 ICD 코드는 몇 건인가요?"},
@@ -530,14 +525,13 @@ class HookTest(ContextCase):
 # --------------------------------------------------------------------------- cli
 class CliTest(ContextCase):
     def test_search_reports_scores_and_file_evidence(self) -> None:
-        payload = json.loads(self.context_cli("search", "폐기 ICD 코드", "--no-qmd").stdout)
+        payload = json.loads(self.context_cli("search", "폐기 ICD 코드").stdout)
         self.assertEqual(payload["results"][0]["id"], "page:폐기-icd-코드")
         self.assertEqual(payload["results"][0]["file"], "wiki/concepts/corpus.json")
         self.assertGreater(payload["results"][0]["score"], 0)
 
     def test_context_json_reports_the_budget(self) -> None:
-        payload = json.loads(self.context_cli("context", "폐기 ICD 코드", "--no-qmd",
-                                              "--json").stdout)
+        payload = json.loads(self.context_cli("context", "폐기 ICD 코드", "--json").stdout)
         self.assertEqual(payload["bytes"], len(payload["text"].encode("utf-8")))
         self.assertGreaterEqual(payload["est_tokens"], 1)
 

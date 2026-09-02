@@ -9,7 +9,16 @@ Determinism contract
 `build` is a pure function of (wiki pages, tools/config/groups.json).
 Running it twice on the same input produces byte-identical artifacts:
 every collection is emitted in a stable sort order, every path stored in
-an artifact is repo-relative, and layout coordinates are rounded.
+an artifact is repo-relative, and layout coordinates are rounded. The
+search index (`index/search.sqlite`, built by `llmwiki_index`) is published
+by rewriting a fresh file in fixed DDL/PK order, so its bytes are deterministic too; `revision.json`
+additionally records `search_root`, the sha256 of the published index file.
+
+`build --changed PATH...` is incremental: only the hinted files are re-hashed,
+the search index gets those pages swapped in place (`index/search.work.sqlite`
+is the mutable work copy, WAL) and the JSON artifacts are projected from the
+published index. An mtime scan verifies the hint; any change outside it falls
+back to a full build. Incremental and full builds produce the same bytes.
 
 Test hooks
 ----------
@@ -27,15 +36,24 @@ import math
 import os
 import re
 import shutil
+import sqlite3
 import sys
+import time
 import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
+try:  # package import (bench: `from scripts import llmwiki`)
+    from . import llmwiki_index as search_index
+except ImportError:  # run as a script or loaded from its file path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import llmwiki_index as search_index  # type: ignore[no-redef]
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 ENV_ROOT = "LLMWIKI_ROOT"
 ENV_NOW = "LLMWIKI_NOW"
+SEARCH_INDEX = search_index.DB_NAME
 
 ALLOWED_TYPES = {"source", "entity", "concept", "synthesis", "project", "home", "index", "log"}
 ALLOWED_BLOCKS = {"heading", "paragraph", "list", "table", "quote", "conflict", "current",
@@ -149,8 +167,16 @@ class Workspace:
         return self.root / "index"
 
     @property
-    def markdown(self) -> Path:
-        return self.index / "markdown"
+    def search_db(self) -> Path:
+        return self.index / SEARCH_INDEX
+
+    @property
+    def work_db(self) -> Path:
+        return self.index / search_index.WORK_NAME
+
+    @property
+    def state_path(self) -> Path:
+        return self.index / search_index.STATE_NAME
 
     @property
     def public(self) -> Path:
@@ -779,65 +805,90 @@ def unresolved_count(page: dict[str, Any]) -> int:
                if b["kind"] == "conflict" and b.get("resolution", {}).get("status") != "resolved")
 
 
-def project(ws: Workspace) -> dict[str, Any]:
-    """Pure projection: canonical pages -> derived artifacts (no disk writes)."""
-    docs = ws.load_documents()
+# 투영에 필요한 page 의 요약. 정본 파일에서도, 검색 색인(page/blk/link 표)에서도 같은 모양으로 만든다 —
+# 그래서 증분 build 가 정본을 전부 다시 읽지 않고도 cold build 와 같은 파생물을 낸다.
+def _record_from_page(rel: str, page: dict[str, Any]) -> dict[str, Any]:
+    rec = {"id": page["id"], "slug": page["slug"], "title": page.get("title"), "type": page.get("type"),
+           "created": page.get("created"), "updated": page.get("updated"),
+           "projects": page.get("projects"), "tags": page.get("tags"), "sources": page.get("sources"),
+           "source": rel, "sha256": sha(canonical(page)),
+           "blocks": [(bid, page["blocks"][bid]["kind"]) for bid in page["block_order"]],
+           "links": [], "unresolved": unresolved_count(page)}
+    if "summary" in page:
+        rec["summary"] = page["summary"]
+    return rec
+
+
+def _records_from_docs(docs: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
     pages = [page for _, page in docs]
-    validator = SchemaValidator.load(ws)
-    errors = [e for page in pages for e in validate_page(page, validator)]
-    if errors:
-        raise WikiError("\n".join(errors))
-
-    ids = [p["id"] for p in pages]
-    slugs = [p["slug"] for p in pages]
-    if len(ids) != len(set(ids)):
-        raise WikiError(f"duplicate page id: {sorted(k for k, v in Counter(ids).items() if v > 1)}")
-    if len(slugs) != len(set(slugs)):
-        raise WikiError(f"duplicate page slug: {sorted(k for k, v in Counter(slugs).items() if v > 1)}")
-    block_owner: dict[str, str] = {}
-    for page in pages:
-        for bid in page["block_order"]:
-            if bid in block_owner:
-                raise WikiError(f"duplicate block id {bid} in {block_owner[bid]} and {page['id']}")
-            block_owner[bid] = page["id"]
-
-    groups = ws.load_groups()
-    groups = merge_project_groups(
-        groups, auto_project_groups((p for page in pages for p in page["projects"]), groups))
     lookup = page_lookup(pages)
-    incoming: Counter[str] = Counter()
-    outgoing: Counter[str] = Counter()
-    edges: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
-    for page in pages:
+    records = [_record_from_page(rel, page) for rel, page in docs]
+    for rec, page in zip(records, pages):
+        seen: set[str] = set()
         for link in implied_links(page):
             target = lookup.get(link_key(link["target"]))
-            if not target or target["id"] == page["id"]:
+            if not target or target["id"] == page["id"] or target["id"] in seen:
                 continue
             # One line per ordered pair: a page that both links to and cites
             # another gets one edge, not two stacked on top of each other.
-            key = (page["id"], target["id"])
-            if key in seen:
-                continue
-            seen.add(key)
-            outgoing[page["id"]] += 1
-            incoming[target["id"]] += 1
-            edges.append({"id": f"edge:{sha('|'.join(key), 16)}", "source": page["id"],
-                          "target": target["id"], "kind": link["kind"]})
+            seen.add(target["id"])
+            rec["links"].append((target["id"], link["kind"]))
+    return records
+
+
+def _records_from_index(idx: "search_index.Index") -> list[dict[str, Any]]:
+    """publish 된 색인의 page/blk/link 표에서 같은 요약을 읽는다 (정본 파일을 열지 않는다)."""
+    db = idx.db
+    records: dict[int, dict[str, Any]] = {}
+    for rid, pid, slug, rel, sha256, meta_json, unresolved in db.execute(
+            "SELECT rid, page_id, slug, source, sha256, meta, unresolved FROM page ORDER BY page_id"):
+        meta = json.loads(meta_json or "{}")
+        rec = {"id": pid, "slug": slug, "title": meta.get("title"), "type": meta.get("type"),
+               "created": meta.get("created"), "updated": meta.get("updated"),
+               "projects": meta.get("projects"), "tags": meta.get("tags"), "sources": meta.get("sources"),
+               "source": rel, "sha256": sha256, "blocks": [], "links": [], "unresolved": int(unresolved or 0)}
+        if "summary" in meta:
+            rec["summary"] = meta["summary"]
+        records[rid] = rec
+    for prid, bid, kind in db.execute("SELECT prid, block_id, kind FROM blk WHERE pos >= 0 ORDER BY prid, pos"):
+        records[prid]["blocks"].append((bid, kind))
+    for src, dst_pid, kind in db.execute(
+            "SELECT l.src, p.page_id, l.kind FROM link l JOIN page p ON p.rid=l.dst "
+            "WHERE l.dst IS NOT NULL ORDER BY l.src, l.ord"):
+        rec = records[src]
+        if any(d == dst_pid for d, _k in rec["links"]):
+            continue
+        rec["links"].append((dst_pid, kind))
+    return sorted(records.values(), key=lambda r: r["id"])
+
+
+def _project_records(records: list[dict[str, Any]], groups: dict[str, Any]) -> dict[str, Any]:
+    """Pure projection: page records -> derived artifacts (no disk writes)."""
+    groups = merge_project_groups(
+        groups, auto_project_groups((p for rec in records for p in rec["projects"]), groups))
+    incoming: Counter[str] = Counter()
+    outgoing: Counter[str] = Counter()
+    edges: list[dict[str, Any]] = []
+    for rec in records:
+        for target_id, kind in rec["links"]:
+            outgoing[rec["id"]] += 1
+            incoming[target_id] += 1
+            edges.append({"id": f"edge:{sha('|'.join((rec['id'], target_id)), 16)}", "source": rec["id"],
+                          "target": target_id, "kind": kind})
     edges.sort(key=lambda e: (e["source"], e["target"], e["kind"]))
 
     buckets: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     nodes: list[dict[str, Any]] = []
-    for page in pages:
-        group = project_group(page["projects"], groups)
-        degree = incoming[page["id"]] + outgoing[page["id"]]
-        node = {"id": page["id"], "slug": page["slug"], "label": page["title"], "type": page["type"],
-                "created": page["created"], "updated": page["updated"],
-                "projects": page["projects"], "tags": page["tags"], "group": group,
-                "summary": page.get("summary", ""), "incoming": incoming[page["id"]],
-                "outgoing": outgoing[page["id"]], "degree": degree,
-                "unresolved_conflicts": unresolved_count(page), "orphan": degree == 0,
-                "data_url": f"pages/{safe_name(page['id'])}"}
+    for rec in records:
+        group = project_group(rec["projects"], groups)
+        degree = incoming[rec["id"]] + outgoing[rec["id"]]
+        node = {"id": rec["id"], "slug": rec["slug"], "label": rec["title"], "type": rec["type"],
+                "created": rec["created"], "updated": rec["updated"],
+                "projects": rec["projects"], "tags": rec["tags"], "group": group,
+                "summary": rec.get("summary", ""), "incoming": incoming[rec["id"]],
+                "outgoing": outgoing[rec["id"]], "degree": degree,
+                "unresolved_conflicts": rec["unresolved"], "orphan": degree == 0,
+                "data_url": f"pages/{safe_name(rec['id'])}"}
         buckets[group].append(node)
         nodes.append(node)
     # Allocate an angular sector proportional to each group's size. Within a
@@ -864,55 +915,356 @@ def project(ws: Workspace) -> dict[str, Any]:
         sector_start += sector_span
     nodes.sort(key=lambda n: n["id"])
 
-    catalog = [{k: p.get(k) for k in ("id", "slug", "title", "type", "updated",
-                                      "projects", "tags", "sources", "summary")} for p in pages]
+    catalog = [{k: rec.get(k) for k in ("id", "slug", "title", "type", "updated",
+                                        "projects", "tags", "sources", "summary")} for rec in records]
     map_pages: dict[str, Any] = {}
     map_blocks: dict[str, Any] = {}
-    for rel, page in sorted(docs, key=lambda item: item[1]["id"]):
+    for rec in sorted(records, key=lambda r: r["id"]):
         # data_url serves the page as a standalone object; the empty RFC 6901
         # pointer selects that object root directly.
-        map_pages[page["id"]] = {"source": rel, "pointer": "",
-                                 "data_url": f"pages/{safe_name(page['id'])}",
-                                 "sha256": sha(canonical(page))}
-        for bid in page["block_order"]:
-            map_blocks[bid] = {"page_id": page["id"], "pointer": f"/blocks/{bid}",
-                               "kind": page["blocks"][bid]["kind"],
-                               "data_url": f"pages/{safe_name(page['id'])}"}
-    search = [{"id": p["id"], "slug": p["slug"], "title": p["title"], "type": p["type"],
-               "summary": p.get("summary", ""),
-               "text": " ".join([p["title"], p.get("summary", ""), *p["tags"], *p["projects"],
-                                 *(p["blocks"][b]["source_text"] for b in p["block_order"])])}
-              for p in pages]
+        map_pages[rec["id"]] = {"source": rec["source"], "pointer": "",
+                                "data_url": f"pages/{safe_name(rec['id'])}", "sha256": rec["sha256"]}
+        for bid, kind in rec["blocks"]:
+            map_blocks[bid] = {"page_id": rec["id"], "pointer": f"/blocks/{bid}", "kind": kind,
+                               "data_url": f"pages/{safe_name(rec['id'])}"}
     routes = {key: sorted(n["id"] for n in nodes if n["group"] == key) for key in groups["project"]}
 
     return {
         "catalog.json": catalog,
         "map.json": {"schema_version": "1.0", "pages": map_pages, "blocks": map_blocks},
-        "search.json": search,
         "graph.json": {"schema_version": "1.0", "nodes": nodes, "edges": edges, "groups": groups},
         "routes.json": routes,
-        "stats.json": {"pages": len(pages), "blocks": sum(len(p["blocks"]) for p in pages),
+        "stats.json": {"pages": len(records), "blocks": sum(len(r["blocks"]) for r in records),
                        "edges": len(edges),
                        "unresolved_conflicts": sum(n["unresolved_conflicts"] for n in nodes)},
     }
 
 
-def build(ws: Workspace) -> dict[str, int]:
-    payloads = project(ws)
-    pages = ws.load_pages()
-    # 뷰어가 폴링으로 갱신을 감지하는 값. 산출물이 실제로 달라질 때만 바뀐다.
-    payloads["revision.json"] = {"schema_version": "1.0", "revision": sha(
-        "".join(canonical(payloads[name]) for name in sorted(payloads))
-        + "".join(canonical(page) for page in pages))}
-    for name, data in payloads.items():
-        dump(ws.index / name, data, pretty=True)
-        dump(ws.public / name, data)
-    shard_dir = ws.public / "pages"
-    shutil.rmtree(shard_dir, ignore_errors=True)
-    shard_dir.mkdir(parents=True, exist_ok=True)
+def check_documents(docs: list[tuple[str, dict[str, Any]]], validator: "SchemaValidator | None") -> None:
+    """Schema + cross-page uniqueness; raises WikiError with every problem listed."""
+    pages = [page for _, page in docs]
+    errors = [e for page in pages for e in validate_page(page, validator)]
+    if errors:
+        raise WikiError("\n".join(errors))
+    ids = [p["id"] for p in pages]
+    slugs = [p["slug"] for p in pages]
+    if len(ids) != len(set(ids)):
+        raise WikiError(f"duplicate page id: {sorted(k for k, v in Counter(ids).items() if v > 1)}")
+    if len(slugs) != len(set(slugs)):
+        raise WikiError(f"duplicate page slug: {sorted(k for k, v in Counter(slugs).items() if v > 1)}")
+    block_owner: dict[str, str] = {}
     for page in pages:
-        dump(shard_dir / safe_name(page["id"]), page)
-    return payloads["stats.json"]
+        for bid in page["block_order"]:
+            if bid in block_owner:
+                raise WikiError(f"duplicate block id {bid} in {block_owner[bid]} and {page['id']}")
+            block_owner[bid] = page["id"]
+
+
+def project(ws: Workspace) -> dict[str, Any]:
+    """Pure projection: canonical pages -> derived artifacts (no disk writes)."""
+    return _project_docs(ws, ws.load_documents())
+
+
+def _project_docs(ws: Workspace, docs: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
+    check_documents(docs, SchemaValidator.load(ws))
+    return _project_records(_records_from_docs(docs), ws.load_groups())
+
+
+def project_from_index(ws: Workspace) -> dict[str, Any]:
+    """The same artifacts, read from the published search index instead of the canonical files."""
+    idx = search_index.open_ro(ws.search_db)
+    try:
+        return _project_records(_records_from_index(idx), ws.load_groups())
+    finally:
+        idx.close()
+
+
+# --------------------------------------------------------------------------- 델타 · 신선도
+# 힌트 밖 파일의 변경 감지는 지난 build 가 `index/search.work.json` 에 파일마다 남긴 [mtime_ns, size] 와의
+# 비교다 — 다르기만 하면(과거로 돌린 mtime 포함) sha 로 확인한다. 시각 문턱은 쓰지 않는다.
+# 델타가 page 의 이 비율을 넘으면 cold build 가 더 싸다.
+FULL_FRACTION = 0.25
+MAP_PAGE_KEYS = ("source", "pointer", "data_url", "sha256")
+
+
+def map_root(payload: dict[str, Any] | None) -> str:
+    """`index/map.json` 의 page 부분 지문. revision 과 색인 meta.map_root 가 이 값으로 맞물린다."""
+    if not payload:
+        return ""
+    pages = payload.get("pages") or {}
+    return sha(canonical({pid: {k: entry.get(k) for k in MAP_PAGE_KEYS} for pid, entry in pages.items()}))
+
+
+def revision_of(root: str, groups: dict[str, Any], *, heading_paths: bool) -> str:
+    """산출물이 실제로 달라질 때만 바뀌는 값 — page 집합(map root)·그룹 설정·색인 옵션의 함수."""
+    return sha(canonical({"map_root": root, "groups": groups, "heading_paths": bool(heading_paths),
+                          "schema": search_index.SCHEMA_VERSION}))
+
+
+def read_map(ws: Workspace) -> dict[str, Any] | None:
+    path = ws.index / "map.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) and isinstance(value.get("pages"), dict) else None
+
+
+def read_state(ws: Workspace) -> dict[str, Any] | None:
+    try:
+        value = json.loads(ws.state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def wiki_files(ws: Workspace) -> dict[str, list[int]]:
+    """wiki/**/*.json → [mtime_ns, size]. 수십 ms 짜리 스캔 — 정본을 열지 않는다."""
+    out: dict[str, list[int]] = {}
+    base = ws.pages_dir
+    # ws.rel 은 symlink 를 풀어 저장소 상대 경로를 만든다. wiki/ 가 symlink 가 아니면 문자열로 자른다(10,000
+    # 파일에서 0.3 초 → 30 ms); symlink 면 파일마다 ws.rel 로 간다.
+    prefix = str(ws.root) + os.sep
+    fast = os.path.realpath(str(base)) == str(base)
+    stack = [str(base)]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    if entry.name.startswith("."):
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+                    elif entry.name.endswith(".json"):
+                        try:
+                            st = entry.stat()
+                        except OSError:
+                            continue
+                        if fast and entry.path.startswith(prefix):
+                            rel = entry.path[len(prefix):].replace(os.sep, "/")
+                        else:
+                            rel = ws.rel(Path(entry.path))
+                        out[rel] = [st.st_mtime_ns, st.st_size]
+        except OSError:
+            continue
+    return out
+
+
+def load_file_pages(ws: Workspace, rel: str) -> list[dict[str, Any]]:
+    """정본 파일 하나의 page 목록 (없으면 [])."""
+    path = ws.root / rel
+    if not path.is_file():
+        return []
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise WikiError(f"{rel}: invalid JSON ({exc})") from exc
+    return [p for p in (value if isinstance(value, list) else [value]) if isinstance(p, dict)]
+
+
+def file_shas_match(ws: Workspace, rel: str, old_pages: dict[str, Any]) -> bool:
+    """파일의 page sha 들이 옛 map 의 항목과 정확히 같은가 (같은 source 의 항목만 본다)."""
+    expected = {pid: e.get("sha256") for pid, e in old_pages.items() if e.get("source") == rel}
+    try:
+        pages = load_file_pages(ws, rel)
+    except WikiError:
+        return False
+    found = {str(p.get("id")): sha(canonical(p)) for p in pages}
+    return found == expected
+
+
+def scan_changes(ws: Workspace, old_map: dict[str, Any], files: dict[str, Any], hint: set[str],
+                 on_disk: dict[str, list[int]] | None = None) -> list[str]:
+    """힌트 밖에서 바뀐 파일 목록. 지난 build 가 파일마다 기록한 `[mtime_ns, size]`(`files`, search.work.json) 와
+    **다르기만 하면** — 더 오래된 mtime 이라도 — sha 로 확인하고, 같으면 파일을 열지 않는다.
+
+    "지난 build 시각보다 새 mtime" 기준은 timestamp 를 보존한 복사나 utime 으로 과거로 돌린 편집을 놓쳤다
+    (codex REVIEW #4). 기록이 없는 파일(새 파일)과 기록·map 에 있는데 없어진 파일은 그대로 변경으로 본다.
+    기록이 없는 상태(옛 build) 에서는 알려진 파일을 전부 sha 로 확인한다 — 느리지만 안전하다."""
+    on_disk = wiki_files(ws) if on_disk is None else on_disk
+    old_pages = old_map.get("pages") or {}
+    known = {str(e.get("source")) for e in old_pages.values()}
+    outside: list[str] = []
+    for rel in sorted((known | set(files)) - set(on_disk)):
+        if rel not in hint:
+            outside.append(rel)
+    for rel, stat in sorted(on_disk.items()):
+        if rel in hint:
+            continue
+        if rel not in known and rel not in files:
+            outside.append(rel)
+        elif list(files.get(rel) or ()) != list(stat) and not file_shas_match(ws, rel, old_pages):
+            outside.append(rel)
+    return outside
+
+
+def page_hash_map(ws: Workspace, changed: Iterable[str] | None = None, *, old_map: dict[str, Any] | None = None
+                  ) -> tuple[dict[str, Any], dict[str, tuple[str, dict[str, Any]]]]:
+    """(map.json 의 pages, 다시 읽은 문서 {page_id: (source, page)}).
+
+    `changed` 가 None 이면 전량(정본을 모두 읽고 검증), 아니면 그 파일만 다시 읽어 sha 를 내고 나머지는
+    `old_map` 의 항목을 재사용한다. 힌트 밖의 변경은 `scan_changes` 가 따로 잡는다 — 여기서는 믿는다.
+    """
+    validator = SchemaValidator.load(ws)
+    if changed is None:
+        docs = ws.load_documents()
+        check_documents(docs, validator)
+        payload = _project_records(_records_from_docs(docs), {"project": {}})["map.json"]
+        return payload["pages"], {str(p["id"]): (rel, p) for rel, p in docs}
+    hint = {ws.rel(ws.root / rel) if not os.path.isabs(rel) else ws.rel(Path(rel)) for rel in changed}
+    old_pages = dict((old_map or {}).get("pages") or {})
+    pages = {pid: e for pid, e in old_pages.items() if str(e.get("source")) not in hint}
+    docs: dict[str, tuple[str, dict[str, Any]]] = {}
+    for rel in sorted(hint):
+        for page in load_file_pages(ws, rel):
+            errors = validate_page(page, validator)
+            if errors:
+                raise WikiError("\n".join(errors))
+            pid = str(page["id"])
+            if pid in docs:
+                raise WikiError(f"duplicate page id: {pid} ({docs[pid][0]}, {rel})")
+            if pid in pages and (ws.root / str(pages[pid].get("source"))).is_file():
+                raise WikiError(f"duplicate page id: {pid} ({pages[pid].get('source')}, {rel})")
+            docs[pid] = (rel, page)
+            pages[pid] = {"source": rel, "pointer": "", "data_url": f"pages/{safe_name(pid)}",
+                          "sha256": sha(canonical(page))}
+    return dict(sorted(pages.items())), docs
+
+
+map_delta = search_index.map_delta
+
+
+def build(ws: Workspace, *, changed: Iterable[str] | None = None, full: bool = False,
+          heading_paths: bool = False) -> dict[str, Any]:
+    """정본 → index/*.json + search.sqlite + viewer/public/data. 결과는 cold 든 증분이든 같은 바이트다.
+
+    `changed` 는 힌트다: 그 파일만 다시 sha 를 내고, `wiki/**/*.json` mtime 스캔으로 힌트 밖의 변경이
+    보이면 전량으로 떨어진다. 증분은 검색 색인의 바뀐 page 행만 갈아 끼우고(`llmwiki_index.update`),
+    파생물은 publish 된 색인의 표에서 투영한다. `index/map.json`·`revision.json` 은 publish 가 성공한
+    뒤에만 쓴다.
+    """
+    started_ns = time.time_ns()
+    phases: dict[str, float] = {}
+    clock = time.perf_counter()
+
+    def lap(name: str) -> None:
+        nonlocal clock
+        now = time.perf_counter()
+        phases[name] = round(phases.get(name, 0.0) + (now - clock) * 1000, 1)
+        clock = now
+
+    groups = ws.load_groups()
+    mode, reason = "full", ""
+    old_map = read_map(ws)
+    state = read_state(ws)
+    old_root = map_root(old_map)
+    on_disk = wiki_files(ws)          # 정본을 읽기 전의 스냅샷 — 그 뒤 바뀐 파일은 다음 build 가 다른 (mtime,size) 로 잡는다
+    hint: set[str] | None = None
+    if changed is not None and not full:
+        hint = {ws.rel(ws.root / rel) if not os.path.isabs(rel) else ws.rel(Path(rel)) for rel in changed}
+        if not old_map or not state:
+            reason = "no-previous-build"
+        elif str(state.get("schema")) != search_index.SCHEMA_VERSION or bool(state.get("heading_paths")) != bool(heading_paths):
+            reason = "index-options-changed"
+        elif str(state.get("map_root")) != old_root:
+            reason = "map-root-mismatch"
+        else:
+            outside = scan_changes(ws, old_map, dict(state.get("files") or {}), hint, on_disk)
+            if outside:
+                reason = "unhinted-change:" + ",".join(outside[:3])
+            else:
+                mode = "incremental"
+    elif full:
+        reason = "full-requested"
+    else:
+        reason = "no-hint"
+    lap("scan")
+
+    built: dict[str, Any] = {}
+    delta = search_index.Delta()
+    docs_by_id: dict[str, tuple[str, dict[str, Any]]] = {}
+    if mode == "incremental":
+        assert old_map is not None and hint is not None
+        new_pages, docs_by_id = page_hash_map(ws, hint, old_map=old_map)
+        delta = map_delta(old_map["pages"], new_pages)
+        new_root = map_root({"pages": new_pages})
+        lap("hash")
+        if len(delta) > FULL_FRACTION * max(len(new_pages), 1):
+            mode, reason = "full", "large-delta"
+        elif not delta:
+            reason = "no-change"
+        else:
+            revision = revision_of(new_root, groups, heading_paths=heading_paths)
+
+            def loader(page_id: str, rel: str) -> dict[str, Any] | None:
+                return next((p for p in load_file_pages(ws, rel) if str(p.get("id")) == page_id), None)
+
+            try:
+                built = search_index.update(ws.search_db, docs_by_id, delta, revision=revision, map_root=new_root,
+                                            expect_map_root=old_root, loader=loader, heading_paths=heading_paths)
+            except search_index.IndexError_ as exc:
+                mode, reason = "full", f"index:{exc}"
+            lap("index")
+    if mode == "incremental":
+        if delta:
+            payloads = project_from_index(ws)
+            lap("project")
+            if map_root(payloads["map.json"]) != new_root:      # 색인과 map 이 어긋나면 믿지 않는다
+                mode, reason = "full", "projection-mismatch"
+        else:
+            payloads = None
+    if mode == "full":
+        docs = ws.load_documents()
+        payloads = _project_docs(ws, docs)
+        new_root = map_root(payloads["map.json"])
+        revision = revision_of(new_root, groups, heading_paths=heading_paths)
+        built = search_index.build(docs, ws.search_db, revision=revision, heading_paths=heading_paths,
+                                   map_root=new_root)
+        docs_by_id = {str(p["id"]): (rel, p) for rel, p in docs}
+        delta = search_index.Delta(added=sorted(docs_by_id))
+        lap("full")
+
+    stats: dict[str, Any]
+    if payloads is None:                                    # 증분인데 델타가 비었다: 산출물은 그대로다
+        stats = dict(json.loads((ws.index / "stats.json").read_text(encoding="utf-8")))
+        # 파일 기록은 갱신한다 — touch 만 된 파일을 sha 로 확인했으니 다음 build 는 열지 않아도 된다
+        dump(ws.state_path, {"schema": search_index.SCHEMA_VERSION, "started_ns": started_ns,
+                             "map_root": new_root, "heading_paths": bool(heading_paths),
+                             "files": dict(sorted(on_disk.items()))})
+    else:
+        payloads["revision.json"] = {"schema_version": "1.0", "revision": revision, "search_root": built["digest"]}
+        for name, data in payloads.items():
+            dump(ws.index / name, data, pretty=True)
+            dump(ws.public / name, data)
+        shard_dir = ws.public / "pages"
+        if mode == "full":
+            shutil.rmtree(shard_dir, ignore_errors=True)
+            shard_dir.mkdir(parents=True, exist_ok=True)
+            for _pid, (_rel, page) in docs_by_id.items():
+                dump(shard_dir / safe_name(page["id"]), page)
+        else:
+            for pid in delta.deleted:
+                (shard_dir / safe_name(pid)).unlink(missing_ok=True)
+            for pid in [*delta.added, *delta.modified]:
+                dump(shard_dir / safe_name(pid), docs_by_id[pid][1])
+        stats = dict(payloads["stats.json"])
+        dump(ws.state_path, {"schema": search_index.SCHEMA_VERSION, "started_ns": started_ns,
+                             "map_root": new_root, "heading_paths": bool(heading_paths),
+                             "files": dict(sorted(on_disk.items()))})
+        lap("write")
+    stats["mode"] = mode
+    stats["phases"] = phases
+    stats["reason"] = reason
+    stats["delta"] = {"added": len(delta.added), "modified": len(delta.modified), "deleted": len(delta.deleted)}
+    if built:
+        stats["index"] = {k: built[k] for k in ("bytes", "digest", "mode") if k in built}
+        if "compacted" in built:
+            stats["index"]["compacted"] = built["compacted"]
+        if "reindexed" in built:
+            stats["index"]["reindexed"] = built["reindexed"]
+    stats["ms"] = round((time.time_ns() - started_ns) / 1e6, 1)
+    return stats
 
 
 # --------------------------------------------------------------------------- render
@@ -979,27 +1331,6 @@ def render_block_html(block: dict[str, Any]) -> str:
 def render_html(page: dict[str, Any]) -> str:
     body = "".join(render_block_html(page["blocks"][bid]) for bid in page["block_order"])
     return f'<article data-page-id="{html.escape(page["id"])}">{body}</article>'
-
-
-def export_markdown(ws: Workspace, out: Path | None = None) -> dict[str, Any]:
-    """Rendered Markdown mirror — optional input for a qmd collection.
-
-    Derived output: safe to delete, regenerated wholesale on every run.
-    """
-    target = Path(out) if out else ws.markdown
-    pages = ws.load_pages()
-    shutil.rmtree(target, ignore_errors=True)
-    target.mkdir(parents=True, exist_ok=True)
-    manifest = []
-    for page in pages:
-        name = safe_name(page["id"]).removesuffix(".json") + ".md"
-        text = render_markdown(page)
-        (target / name).write_text(text, encoding="utf-8")
-        manifest.append({"id": page["id"], "slug": page["slug"], "title": page["title"],
-                         "file": name, "sha256": sha(text)})
-    dump(target / "manifest.json", {"schema_version": "1.0", "generated_from": ws.rel(ws.pages_dir),
-                                    "pages": manifest}, pretty=True)
-    return {"pages": len(manifest), "out": ws.rel(target)}
 
 
 # --------------------------------------------------------------------------- addressing
@@ -1173,16 +1504,15 @@ def lint(ws: Workspace) -> tuple[list[str], list[str]]:
 
 
 def stale_index(ws: Workspace) -> list[str]:
-    """Compare index/map.json against a fresh projection without writing anything."""
+    """index/map.json 이 정본과 맞는가 — 전량 재투영 대신 mtime 스캔 + 후보 파일의 sha 대조. 아무것도 쓰지 않는다."""
     path = ws.index / "map.json"
     if not path.exists():
         return ["index/map.json missing — run build"]
-    try:
-        current = json.loads(path.read_text(encoding="utf-8"))
-        fresh = project(ws)["map.json"]
-    except (WikiError, json.JSONDecodeError):
+    current = read_map(ws)
+    if current is None:
         return ["index/map.json unreadable — run build"]
-    if canonical(current) != canonical(fresh):
+    state = read_state(ws)
+    if scan_changes(ws, current, dict((state or {}).get("files") or {}), set()):
         return ["index/map.json stale — run build"]
     return []
 
@@ -1281,23 +1611,47 @@ def ingest(ws: Workspace, source: Path, page_type: str | None = None,
                     "source": ws.rel(path), "dest": ws.rel(dest),
                     "mode": "update" if existing else "create",
                     "registered_groups": registered_groups})
+    # 파생물은 build 로만 갱신한다 — 바뀐 파일만 힌트로 넘겨 색인의 그 page 행만 갈아 끼운다.
+    changed = [ws.rel(dest)] + ([ws.rel(moved_from)] if moved_from else [])
+    result["build"] = build(ws, changed=changed)
     return result
 
 
 # --------------------------------------------------------------------------- search
+def open_search_index(ws: Workspace) -> "search_index.Index":
+    """The built index when it is fresh, otherwise one built in memory from the canonical pages.
+
+    `query` therefore never answers from a stale index: freshness means the index's
+    `meta.revision` matches `index/revision.json` and no canonical file is newer than it.
+    """
+    if not ws.fixtures and ws.search_db.is_file():
+        try:
+            idx = search_index.open_ro(ws.search_db)
+            fresh = (idx.revision and idx.revision == search_index.read_revision(ws.root)
+                     and search_index.newest_mtime(ws.pages_dir) <= ws.search_db.stat().st_mtime)
+            if fresh:
+                return idx
+            idx.close()
+        except (OSError, ValueError, sqlite3.Error):
+            pass
+    return search_index.build_memory(ws.load_documents())
+
+
 def query(ws: Workspace, text: str, limit: int = 10) -> list[dict[str, Any]]:
-    """Scores straight off the canonical pages — never depends on a stale index."""
-    terms = [norm(t).lower() for t in text.split() if norm(t)]
-    rows = project(ws)["search.json"]
-    scored: list[tuple[int, dict[str, Any]]] = []
-    for row in rows:
-        title, summary, body = row["title"].lower(), row["summary"].lower(), row["text"].lower()
-        score = sum(8 if t in title else 2 if t in summary else 1 if t in body else 0 for t in terms)
-        if score:
-            scored.append((score, row))
-    scored.sort(key=lambda item: (-item[0], item[1]["title"], item[1]["id"]))
-    return [{"score": score, "id": row["id"], "slug": row["slug"], "title": row["title"],
-             "summary": row["summary"]} for score, row in scored[:limit]]
+    """Rank pages with the search index (fresh on disk, or built in memory from the pages)."""
+    idx = open_search_index(ws)
+    try:
+        result = idx.search(text, k=max(1, limit))
+        pages = idx.pages([h.page_id for h in result.hits])
+    finally:
+        idx.close()
+    rows = []
+    for hit in result.hits:
+        page = pages.get(hit.page_id, {})
+        rows.append({"score": round(hit.score, 4), "id": hit.page_id, "slug": page.get("slug", hit.slug),
+                     "title": page.get("title", ""), "summary": page.get("summary", ""),
+                     "blocks": list(hit.block_ids), "superseded_by": hit.head if hit.head != hit.page_id else None})
+    return rows
 
 
 # --------------------------------------------------------------------------- CLI
@@ -1318,15 +1672,22 @@ def build_parser() -> argparse.ArgumentParser:
     ing.add_argument("--update", action="store_true", help="replace an existing page, keeping created/history")
     ing.add_argument("--dry-run", action="store_true")
 
-    for name, help_text in (("build", "regenerate index/ and viewer public data"),
+    for name, help_text in (("build", "regenerate index/ (incl. search.sqlite) and viewer public data"),
                             ("validate", "schema + structural checks"),
                             ("lint", "links, conflicts, orphans, stale index")):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--fixtures", action="store_true")
         if name != "build":
             p.add_argument("--json", action="store_true", dest="as_json")
+        else:
+            p.add_argument("--heading-paths", action="store_true",
+                           help="index blocks with their heading path prefixed (H6; default off)")
+            p.add_argument("--changed", nargs="+", metavar="PATH", default=None,
+                           help="hint: only these wiki files changed (verified by an mtime scan; "
+                                "anything else changed falls back to a full build)")
+            p.add_argument("--full", action="store_true", help="ignore the work index and rebuild everything")
 
-    q = sub.add_parser("query", help="rank pages by term overlap")
+    q = sub.add_parser("query", help="rank pages with the search index")
     q.add_argument("query")
     q.add_argument("--limit", type=int, default=10)
     q.add_argument("--fixtures", action="store_true")
@@ -1349,10 +1710,6 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("selector")
     out.add_argument("--fixtures", action="store_true")
 
-    exp = sub.add_parser("export-md", help="write rendered Markdown for optional qmd indexing")
-    exp.add_argument("--out")
-    exp.add_argument("--fixtures", action="store_true")
-
     log = sub.add_parser("log", help="append to or read wiki/log.jsonl")
     log.add_argument("--action")
     log.add_argument("--page")
@@ -1370,7 +1727,7 @@ def run(argv: list[str] | None = None) -> int:
         emit(ingest(ws, Path(args.input), args.type, args.project, args.summary,
                     args.update, args.dry_run))
     elif command == "build":
-        emit(build(ws))
+        emit(build(ws, changed=args.changed, full=args.full, heading_paths=args.heading_paths))
     elif command in {"validate", "lint"}:
         errors, warnings = lint(ws)
         if command == "validate":
@@ -1411,8 +1768,6 @@ def run(argv: list[str] | None = None) -> int:
     elif command == "outline":
         page, _ = resolve(ws, args.selector)
         emit(outline(page))
-    elif command == "export-md":
-        emit(export_markdown(ws, Path(args.out) if args.out else None))
     elif command == "log":
         if args.action:
             emit(append_log(ws, {k: v for k, v in

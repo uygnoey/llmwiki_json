@@ -14,12 +14,13 @@ tests/test_install_windows.py 가 옵션 목록을 서로 대조한다.
   Windows 10/11  — Windows PowerShell 5.1 과 PowerShell 7 양쪽
   WSL 안이라면 이것 말고 scripts/install.sh 를 쓴다 (그쪽이 POSIX 환경이다)
 
-없는 도구는 사용자 영역에 받아 온다 — Python 은 uv, qmd 는 Bun. 어느 쪽도
+없는 도구는 사용자 영역에 받아 온다 — Python 은 uv, viewer 가 쓰는 Bun 은
+공식 설치기(v1.3.14 고정). 어느 쪽도
 PATH 환경변수나 시스템 경로를 건드리지 않고, 받은 절대경로를 바로 쓴다.
 -NoBootstrap 으로 네트워크 설치를 전부 끌 수 있고, -DryRun 은 계획만 보여준다.
 
-이 스크립트는 wiki/ 정본과 raw/ 를 절대 건드리지 않는다. index/markdown 은
-정식 `llmwiki.py export-md` 로만 다시 만든다.
+이 스크립트는 wiki/ 정본과 raw/ 를 절대 건드리지 않는다. 검색 색인
+(index\search.sqlite) 은 정식 `llmwiki.py build` 로만 만든다.
 
 실행이 막히면 (기본 실행 정책이 스크립트를 거부한다):
     powershell -ExecutionPolicy Bypass -File scripts\install.ps1
@@ -58,7 +59,8 @@ $DryRun       = $false
 $Force        = $false
 $WantCodex    = $false
 $WantClaude   = $false
-$WithQmd      = $true
+$WithBun      = $true
+$LegacyQmdFlag = $false
 $WithMcp      = $true
 $WithGuides   = $true
 $Bootstrap    = $true
@@ -72,13 +74,12 @@ $GhCreate        = ''
 $Private         = 'ask'
 $Ask             = $true
 $RemoteName      = 'private'
-$QmdName      = 'llmwiki_json'
 $Quiet        = $false
 
-# 부트스트랩 대상. 저장소 규칙상 package manager 는 Bun 뿐이고 버전은 고정이다
-# (npm/yarn/pnpm 금지). qmd 는 공식 패키지에서만 받는다.
+# 부트스트랩 대상은 Python(uv) 과 viewer 가 쓰는 Bun 이다. 저장소 규칙상
+# package manager 는 Bun 뿐이고 버전은 고정이다 (npm/yarn/pnpm 금지). qmd 는
+# 더 이상 받지 않는다 — 검색은 `llmwiki.py build` 가 만드는 index\search.sqlite 가 한다.
 $BunVersion       = '1.3.14'
-$QmdPackage       = '@tobilu/qmd'
 $UvInstallerUrl   = 'https://astral.sh/uv/install.ps1'
 $BunInstallerUrl  = 'https://bun.sh/install.ps1'
 $UvDir  = if ($env:UV_INSTALL_DIR) { $env:UV_INSTALL_DIR } else { Join-Path $HOME '.local\bin' }
@@ -88,7 +89,6 @@ $BunDir = if ($env:BUN_INSTALL)    { $env:BUN_INSTALL }    else { Join-Path $HOM
 $Py = ''; $PySource = ''; $PyVersion = ''
 $UvBin = ''; $UvSource = ''
 $BunBin = ''; $BunSource = ''
-$QmdBin = ''; $QmdSource = ''
 
 function Show-Usage {
     @'
@@ -106,14 +106,16 @@ llmwiki_json 자동 컨텍스트 주입 설치 (Windows)
   -n, -DryRun         바뀔 내용만 보여주고 아무것도 쓰지 않는다 (네트워크도 안 탄다)
       -Codex          Codex 만 대상으로 한다
       -Claude         Claude Code 만 대상으로 한다
-      -NoQmd          qmd 설치와 collection 준비를 건너뛴다
-      -WithQmd        (기본값) qmd 를 준비한다 — 옛 이름, 남겨 둔다
+      -NoBun          viewer 용 Bun 부트스트랩을 건너뛴다
+      -WithBun        (기본값) viewer 용 Bun 1.3.14 를 준비한다
+      -NoQmd          (옛 옵션, 무시된다) qmd 는 더 이상 쓰지 않는다
+      -WithQmd        (옛 옵션, 무시된다)
       -NoBootstrap    없는 도구를 받아 오지 않는다 (네트워크 설치 전면 금지)
       -NoMcp          MCP 서버 등록을 건너뛴다
       -NoGuides       ~\.codex\AGENTS.md, ~\.claude\CLAUDE.md 를 건드리지 않는다
       -Python P       쓸 인터프리터 절대경로 — 자동 선택보다 항상 우선한다
       -McpName N      MCP 서버 이름 (기본 llmwiki)
-      -QmdName N      qmd collection 이름 (기본 llmwiki_json)
+      -QmdName N      (옛 옵션, 무시된다)
       -Force          미지원 OS 나 미감지 클라이언트에서도 강행한다
   -q, -Quiet          진행 로그를 줄인다
   -h, -Help           이 도움말
@@ -139,8 +141,9 @@ llmwiki_json 자동 컨텍스트 주입 설치 (Windows)
 
 받아 오는 것 — 전부 사용자 영역이고 PATH 는 건드리지 않는다
   uv    공식 Astral PowerShell installer, UV_NO_MODIFY_PATH=1
-  Bun   공식 설치기로 정확히 v1.3.14 를 $BUN_INSTALL(기본 ~\.bun) 에
-  qmd   bun install -g @tobilu/qmd
+  Bun   공식 설치기로 정확히 v1.3.14 를 $BUN_INSTALL(기본 ~\.bun) 에 — viewer(Bun 1.3.14) 용
+
+검색 색인은 별도 도구 없이 `llmwiki.py build` 가 index\search.sqlite 로 만든다.
 
 실행 정책에 막히면
   powershell -ExecutionPolicy Bypass -File scripts\install.ps1
@@ -165,8 +168,9 @@ while ($i -lt $argv.Count) {
         '^(-n|--dry-run|-DryRun)$'            { $DryRun = $true }
         '^(--codex|-Codex)$'                  { $WantCodex = $true }
         '^(--claude|-Claude)$'                { $WantClaude = $true }
-        '^(--with-qmd|-WithQmd)$'             { $WithQmd = $true }
-        '^(--no-qmd|-NoQmd)$'                 { $WithQmd = $false }
+        '^(--with-bun|-WithBun)$'             { $WithBun = $true }
+        '^(--no-bun|-NoBun)$'                 { $WithBun = $false }
+        '^(--with-qmd|-WithQmd|--no-qmd|-NoQmd)$' { $LegacyQmdFlag = $true }
         '^(--no-bootstrap|-NoBootstrap)$'     { $Bootstrap = $false }
         '^(--no-mcp|-NoMcp)$'                 { $WithMcp = $false }
         '^(--no-guides|-NoGuides)$'           { $WithGuides = $false }
@@ -176,7 +180,7 @@ while ($i -lt $argv.Count) {
         '^(--mcp-name|-McpName)$'             { if (-not $value) { [Console]::Error.WriteLine("error: $a 에 값이 필요하다"); exit 2 }
                                               $McpName = $value; $i++ }
         '^(--qmd-name|-QmdName)$'             { if (-not $value) { [Console]::Error.WriteLine("error: $a 에 값이 필요하다"); exit 2 }
-                                              $QmdName = $value; $i++ }
+                                              $LegacyQmdFlag = $true; $i++ }
         '^(--force|-Force)$'                  { $Force = $true }
         '^(--ingest-routine|-IngestRoutine)$' { if (-not $value) { [Console]::Error.WriteLine("error: $a 에 값이 필요하다"); exit 2 }
                                               $Routine = $value; $i++ }
@@ -208,7 +212,7 @@ while ($i -lt $argv.Count) {
 
 # --------------------------------------------------------------- 출력
 # 진행 로그는 파이프라인 데이터가 아니다. Write-Output 으로 내보내면 이 함수를
-# 부른 함수의 반환값에 그대로 섞여, `if (-not (Install-Qmd))` 같은 곳이 문자열
+# 부른 함수의 반환값에 그대로 섞여, `if (-not (Install-Uv))` 같은 곳이 문자열
 # 배열을 받고 언제나 참이 된다 — PowerShell 에서 가장 흔한 사고다.
 function Say  ($m) { if (-not $Quiet) { Write-Host $m } }
 function Step ($m) { if (-not $Quiet) { Write-Host ''; Write-Host "== $m" } }
@@ -413,14 +417,9 @@ function Resolve-Python {
 }
 
 # ---------------------------------------------------------------------- bun
-function Get-BunBinDir {
-    if ($script:BunBin) {
-        $r = Invoke-Quiet $script:BunBin @('pm', 'bin', '-g')
-        if ($r.Ok -and $r.Output.Trim()) { return $r.Output.Trim() }
-    }
-    return (Join-Path $BunDir 'bin')
-}
-
+# Bun 은 viewer(viewer\package.json, Bun 1.3.14) 를 돌리는 데 쓴다. hook 이나
+# 검색 색인은 Bun 없이 돈다 — 그래서 없어도 설치를 막지 않고, -NoBun 으로
+# 아예 건너뛸 수 있다.
 function Resolve-Bun {
     if ($script:BunBin) { return $true }
     $found = Get-Command bun -ErrorAction SilentlyContinue
@@ -462,46 +461,15 @@ function Install-Bun {
     return $true
 }
 
-# ---------------------------------------------------------------------- qmd
-function Find-Executable([string]$Dir, [string]$Name) {
-    # bun 의 전역 설치는 Windows 에서 .exe 나 .cmd shim 중 하나를 남긴다.
-    foreach ($ext in @('.exe', '.cmd', '.bat', '')) {
-        $p = Join-Path $Dir ($Name + $ext)
-        if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
-    }
-    return ''
-}
-
-function Resolve-Qmd {
-    if ($script:QmdBin) { return $true }
-    $found = Get-Command qmd -ErrorAction SilentlyContinue
-    if ($found) { $script:QmdBin = $found.Source; $script:QmdSource = '기존'; return $true }
-    $candidate = Find-Executable (Join-Path $BunDir 'bin') 'qmd'
-    if ($candidate) { $script:QmdBin = $candidate; $script:QmdSource = '기존'; return $true }
-    return $false
-}
-
-function Install-Qmd {
-    if (Resolve-Qmd) { return $true }
-    if (-not $script:AllowToolInstall) { return $false }
-    if ($DryRun) {
-        Install-Bun | Out-Null
-        Plan "bun install -g $QmdPackage"
-        return $true
-    }
-    if (-not $Bootstrap) {
-        Warn 'qmd 가 없는데 -NoBootstrap 이라 받아 오지 않는다 — collection 준비를 건너뛴다'
-        return $false
+function Install-ViewerBun {
+    # install 의 "도구 준비" 단계. 설정 파일을 쓰기 전에 끝난다.
+    if (-not $WithBun) { return }
+    Step "도구 준비 (viewer 용 Bun $BunVersion)"
+    if (-not $Bootstrap -and -not (Resolve-Bun)) {
+        Warn "Bun 이 없는데 -NoBootstrap 이라 받아 오지 않는다 — viewer 를 쓰려면 Bun $BunVersion 을 따로 마련하라"
+        return
     }
     Install-Bun | Out-Null
-    Say "  $QmdPackage 을(를) 설치한다 (bun install -g)"
-    $r = Invoke-Quiet $script:BunBin @('install', '-g', $QmdPackage)
-    if (-not $r.Ok) { Die "bun install -g $QmdPackage 이 실패했다" }
-    $dir = Get-BunBinDir
-    $candidate = Find-Executable $dir 'qmd'
-    if (-not $candidate) { Die "qmd 를 설치했는데 $dir 에 없다" }
-    $script:QmdBin = $candidate; $script:QmdSource = '설치함'
-    return $true
 }
 
 # --------------------------------------------------------------- 클라이언트
@@ -550,10 +518,8 @@ function Show-Detection {
     } else { Write-Host '  uv              없음 (필요할 때만 받는다)' }
     if (Resolve-Bun) {
         Write-Host ("  bun             {0}  [{1}, {2}]" -f $BunBin, (Invoke-Quiet $BunBin @('--version')).Output.Trim(), $BunSource)
-    } else { Write-Host ("  bun             없음 (qmd 가 필요할 때만 받는다, v{0} 고정)" -f $BunVersion) }
-    if (Resolve-Qmd) {
-        Write-Host ("  qmd             {0}  [{1}, {2}]" -f $QmdBin, (Invoke-Quiet $QmdBin @('--version')).Output.Trim(), $QmdSource)
-    } else { Write-Host ("  qmd             없음 ({0} 로 설치한다)" -f $QmdPackage) }
+    } else { Write-Host ("  bun             없음 (viewer 용, install 이 v{0} 를 받는다)" -f $BunVersion) }
+    Write-Host '  검색 색인       index\search.sqlite (llmwiki.py build 가 만든다)'
     if ($HaveCodex) {
         Write-Host ("  codex           {0}" -f (Invoke-Quiet 'codex' @('--version')).Output.Trim())
     } else { Write-Host '  codex           없음' }
@@ -746,53 +712,6 @@ function Uninstall-Mcp {
     Step 'MCP 서버 등록 해제'
     if ($WantClaude -and $HaveClaude) { Uninstall-McpFor 'claude' }
     if ($WantCodex  -and $HaveCodex)  { Uninstall-McpFor 'codex' }
-}
-
-# --------------------------------------------------------------- qmd
-# qmd 는 후보 탐색용 보조 색인일 뿐이다. 남이 만든 collection 은 이름이 겹쳐도
-# 절대 지우거나 가리키는 곳을 바꾸지 않는다 — 경고하고 손을 뗀다.
-function Get-QmdPath([string]$Name) {
-    if (-not $script:QmdBin) { return '' }
-    $r = Invoke-Quiet $script:QmdBin @('collection', 'show', $Name)
-    if (-not $r.Ok) { return '' }
-    foreach ($line in ($r.Output -split "`r?`n")) {
-        if ($line -match '^\s*Path:\s*(.+?)\s*$') { return $Matches[1] }
-    }
-    return ''
-}
-
-function Install-QmdCollection {
-    if (-not $WithQmd) { return }
-    Step "qmd collection ($QmdName)"
-    if (-not (Install-Qmd)) { return }
-    if ($DryRun -and -not $script:QmdBin) {
-        Plan "qmd 설치 후 collection '$QmdName' 준비"
-        return
-    }
-    $target = Join-Path $RepoRoot 'index\markdown'
-    if ($DryRun) {
-        Plan "llmwiki.py export-md  ->  $target"
-        $existing = Get-QmdPath $QmdName
-        if (-not $existing) { Plan "qmd collection add $target --name $QmdName" }
-        elseif ($existing -eq $target) { Plan "qmd update -c $QmdName  (이미 이 저장소를 가리킨다)" }
-        else { Plan "건너뜀 — '$QmdName' 이 이미 $existing 를 가리킨다" }
-        return
-    }
-    & $script:Py $WikiCli export-md | Out-Null
-    Say "  markdown 재생성 완료: $target"
-    $existing = Get-QmdPath $QmdName
-    if (-not $existing) {
-        if ((Invoke-Quiet $script:QmdBin @('collection', 'add', $target, '--name', $QmdName)).Ok) {
-            Say '  collection 생성 완료'
-        } else { Warn 'qmd collection add 실패' }
-    } elseif ($existing -eq $target) {
-        if ((Invoke-Quiet $script:QmdBin @('update', '-c', $QmdName)).Ok) {
-            Say '  기존 collection 재색인 완료'
-        } else { Warn 'qmd update 실패' }
-    } else {
-        Warn "'$QmdName' 은 이미 $existing 를 가리킨다 — 건드리지 않는다."
-        Warn '  다른 이름을 쓰려면: -QmdName <새이름>'
-    }
 }
 
 # --------------------------------------------------------------- Codex 신뢰
@@ -988,7 +907,8 @@ try {
             Show-Detection
             Assert-Targets
             # 네트워크가 필요한 일은 전부 여기서 끝낸다 — 아래부터는 설정 쓰기다.
-            if ($WithQmd) { Step '도구 준비'; Install-Qmd | Out-Null }
+            if ($LegacyQmdFlag) { Warn 'qmd 옵션은 더 이상 쓰지 않는다 — 검색은 llmwiki.py build 가 만드는 index\search.sqlite 다' }
+            Install-ViewerBun
             if (-not $Py) {
                 # -DryRun 이면서 쓸 Python 이 아직 없는 경우다. 위에 계획은 다 찍었고,
                 # 그 다음 계획은 Python 이 있어야 만들 수 있다.
@@ -998,7 +918,6 @@ try {
             }
             Install-Hooks
             Install-Mcp
-            Install-QmdCollection
             Install-PrivateRemote
             Install-Routine
             if ($DryRun) { Step 'dry-run 종료 — 아무것도 바꾸지 않았다'; exit 0 }
@@ -1015,11 +934,8 @@ try {
             Uninstall-Hooks
             Uninstall-Mcp
             Uninstall-Routine
-            if ($WithQmd) {
-                Step 'qmd'
-                Warn 'collection 과 받아 온 도구(uv/Bun/qmd)는 자동으로 지우지 않는다.'
-                Warn "  collection 을 정말 지우려면: qmd collection remove $QmdName"
-            }
+            Step '받아 온 도구'
+            Warn "받아 온 도구(uv/Bun)는 자동으로 지우지 않는다 — $UvDir, $BunDir"
             if (-not $DryRun) {
                 Step '남은 백업'
                 foreach ($f in @(

@@ -14,7 +14,7 @@ class ProjectionShapeTest(WorkspaceCase):
 
     def test_emits_every_artifact(self) -> None:
         self.assertEqual(sorted(self.payloads), ["catalog.json", "graph.json", "map.json",
-                                                 "routes.json", "search.json", "stats.json"])
+                                                 "routes.json", "stats.json"])
 
     def test_stats_count_pages_blocks_edges_and_conflicts(self) -> None:
         stats = self.payloads["stats.json"]
@@ -83,7 +83,7 @@ class DeterminismTest(WorkspaceCase):
         self.write_pages([pages[0]], name="aa/two.json")
         split = llmwiki.project(self.ws)
 
-        for artifact in ("catalog.json", "graph.json", "routes.json", "search.json", "stats.json"):
+        for artifact in ("catalog.json", "graph.json", "routes.json", "stats.json"):
             self.assertEqual(combined[artifact], split[artifact], artifact)
         self.assertEqual({k: v["sha256"] for k, v in combined["map.json"]["pages"].items()},
                          {k: v["sha256"] for k, v in split["map.json"]["pages"].items()})
@@ -91,13 +91,19 @@ class DeterminismTest(WorkspaceCase):
     def test_build_writes_identical_files_twice(self) -> None:
         self.write_demo()
         llmwiki.build(self.ws)
-        before = {p.name: p.read_bytes() for p in sorted((self.root / "index").glob("*.json"))}
+        # search.work.* 는 증분 build 의 작업 DB 와 상태(시작 시각) 라 발행물이 아니다.
+        before = {p.name: p.read_bytes() for p in sorted((self.root / "index").iterdir())
+                  if p.is_file() and not p.name.startswith("search.work.")}
         llmwiki.build(self.ws)
-        after = {p.name: p.read_bytes() for p in sorted((self.root / "index").glob("*.json"))}
+        after = {p.name: p.read_bytes() for p in sorted((self.root / "index").iterdir())
+                 if p.is_file() and not p.name.startswith("search.work.")}
         self.assertEqual(before, after)
         self.assertEqual(sorted(before), ["catalog.json", "graph.json", "map.json",
-                                          "revision.json", "routes.json", "search.json",
+                                          "revision.json", "routes.json", "search.sqlite",
                                           "stats.json"])
+        self.assertEqual(sorted(p.name for p in (self.root / "index").iterdir()
+                                if p.name.startswith("search.work.")),
+                         ["search.work.json", "search.work.sqlite"])
 
     def test_layout_coordinates_are_rounded_and_stable(self) -> None:
         self.write_demo()
@@ -128,7 +134,9 @@ class BuildOutputTest(WorkspaceCase):
 
     def test_empty_knowledge_builds_an_empty_projection(self) -> None:
         stats = llmwiki.build(self.ws)
-        self.assertEqual(stats, {"pages": 0, "blocks": 0, "edges": 0, "unresolved_conflicts": 0})
+        self.assertEqual({k: stats[k] for k in ("pages", "blocks", "edges", "unresolved_conflicts")},
+                         {"pages": 0, "blocks": 0, "edges": 0, "unresolved_conflicts": 0})
+        self.assertEqual(stats["mode"], "full")
 
     def test_duplicate_page_id_is_rejected(self) -> None:
         page = make_page("alpha", "# Alpha\n")

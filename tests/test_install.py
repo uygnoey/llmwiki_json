@@ -17,7 +17,6 @@ from pathlib import Path
 from tests.support import REPO, llmwiki_context as ctx, make_page
 
 INSTALLER = REPO / "scripts" / "install.sh"
-QMD_PACKAGE = "@tobilu/qmd"
 
 CORPUS = [
     make_page("폐기-icd-코드",
@@ -44,16 +43,6 @@ FOREIGN_CLAUDE = {"theme": "dark", "permissions": {"allow": ["Bash"]},
                       {"hooks": [{"type": "command", "command": "other-tool.sh"}]}]}}
 FOREIGN_AGENTS = "# 내 기존 지침\n\n건드리면 안 되는 내용.\n"
 
-# collection 이 이미 남의 경로를 가리키는 상황을 흉내 내는 가짜 qmd.
-FAKE_QMD = """#!/bin/sh
-printf '%s\\n' "$*" >> "$FAKE_QMD_LOG"
-if [ "$1" = --version ]; then printf 'qmd 0.0.0-fake\\n'; exit 0; fi
-if [ "$1" = collection ] && [ "$2" = show ]; then
-    [ -n "$FAKE_QMD_PATH" ] || exit 1
-    printf 'Collection: %s\\n  Path:     %s\\n' "$3" "$FAKE_QMD_PATH"
-fi
-exit 0
-"""
 FAKE_UNAME = "#!/bin/sh\nprintf 'Plan9\\n'\n"
 
 # 네트워크를 타지 않는 가짜 다운로더. 요청한 URL 을 기록하고, 그 URL 에 맞는
@@ -148,20 +137,11 @@ fi
 exit 0
 """
 
-# 가짜 bun: --version 과 `install -g <pkg>` 만. 전역 설치는 $BUN_INSTALL/bin 에
-# 가짜 qmd 를 놓는 것으로 흉내 낸다.
+# 가짜 bun: viewer 용이라 설치기는 --version 만 묻는다. 버전 질의는 네트워크가
+# 아니므로 기록하지 않고, 그 밖의 호출(있으면 안 된다)만 남긴다.
 FAKE_BUN = """#!/bin/sh
-printf 'bun %s\\n' "$*" >> "$FAKE_NET_LOG"
 if [ "$1" = --version ]; then printf '%s\\n' "${FAKE_BUN_VERSION:-1.3.14}"; exit 0; fi
-if [ "$1" = pm ] && [ "$2" = bin ]; then printf '%s/bin\\n' "${BUN_INSTALL:-$HOME/.bun}"; exit 0; fi
-if [ "$1" = install ] && [ "$2" = -g ]; then
-    [ -n "$FAKE_BUN_INSTALL_G_FAIL" ] && exit 1
-    dir=${BUN_INSTALL:-$HOME/.bun}/bin
-    mkdir -p "$dir"
-    cp "$FAKE_PAYLOAD/qmd" "$dir/qmd"
-    chmod +x "$dir/qmd"
-    exit 0
-fi
+printf 'bun %s\\n' "$*" >> "$FAKE_NET_LOG"
 exit 0
 """
 
@@ -218,7 +198,7 @@ class InstallerCase(unittest.TestCase):
         # 개발 저장소와 다른, 일부러 깊은 경로에 clone 한다.
         self.clone = self.tmp / "somewhere" / "else" / "my-wiki"
         (self.clone / "scripts").mkdir(parents=True)
-        for name in ("llmwiki.py", "llmwiki_context.py", "install.sh"):
+        for name in ("llmwiki.py", "llmwiki_index.py", "llmwiki_context.py", "install.sh"):
             shutil.copy2(REPO / "scripts" / name, self.clone / "scripts" / name)
         (self.clone / "scripts" / "install.sh").chmod(0o755)
         for rel in ("tools/config/groups.json", "tools/schema/page.schema.json"):
@@ -241,14 +221,13 @@ class InstallerCase(unittest.TestCase):
         self.claude_settings.write_text(json.dumps(FOREIGN_CLAUDE, indent=2), encoding="utf-8")
         self.codex_guide.write_text(FOREIGN_AGENTS, encoding="utf-8")
 
-        # codex/claude/qmd 가 없는 PATH — 감지 결과를 테스트가 통제한다.
+        # codex/claude/bun 이 없는 PATH — 감지 결과를 테스트가 통제한다.
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
         # 어떤 테스트도 실수로 네트워크를 타지 못하게, curl/wget 을 항상
         # 가짜로 덮는다. payload 를 깔지 않은 테스트에서는 그냥 실패한다.
         self.stub("curl", FAKE_CURL)
         self.stub("wget", FAKE_WGET)
-        self.qmd_log = self.tmp / "qmd.log"
         self.mcp_db = self.tmp / "mcp"
         self.mcp_state = self.home / ".llmwiki" / "installed-mcp"
         self.net_log = self.tmp / "net.log"
@@ -258,7 +237,6 @@ class InstallerCase(unittest.TestCase):
         self.uv_bin = self.home / ".local" / "bin" / "uv"
         self.uv_python = self.home / "uv-python" / "python3"
         self.bun_bin = self.home / ".bun" / "bin" / "bun"
-        self.qmd_bin = self.home / ".bun" / "bin" / "qmd"
 
     # ------------------------------------------------------------- helpers
     def stub(self, name: str, body: str) -> None:
@@ -280,8 +258,6 @@ class InstallerCase(unittest.TestCase):
             "HOME": str(self.home),
             "PATH": os.pathsep.join([str(self.bin), str(Path(sys.executable).parent),
                                      "/usr/bin", "/bin"]),
-            "FAKE_QMD_LOG": str(self.qmd_log),
-            "FAKE_QMD_PATH": "",
             "FAKE_MCP_DB": str(self.mcp_db),
             "FAKE_NET_LOG": str(self.net_log),
             "FAKE_PAYLOAD": str(self.payload),
@@ -292,7 +268,6 @@ class InstallerCase(unittest.TestCase):
             "FAKE_NET_FAIL": "",
             "FAKE_UV_INSTALL_FAIL": "",
             "FAKE_BUN_INSTALL_FAIL": "",
-            "FAKE_BUN_INSTALL_G_FAIL": "",
         }
         for key in ("LANG", "LC_ALL", "TMPDIR"):
             if key in os.environ:
@@ -310,7 +285,7 @@ class InstallerCase(unittest.TestCase):
         return proc
 
     def install(self, *extra: str) -> subprocess.CompletedProcess[str]:
-        return self.run_installer("install", "--codex", "--claude", "--no-mcp", "--no-qmd",
+        return self.run_installer("install", "--codex", "--claude", "--no-mcp", "--no-bun",
                                   "-q", *extra)
 
     def snapshot(self) -> dict[str, bytes]:
@@ -320,7 +295,7 @@ class InstallerCase(unittest.TestCase):
                 for p in sorted(self.home.rglob("*")) if p.is_file()}
 
     def config_snapshot(self) -> dict[str, str]:
-        """클라이언트 설정만. 받아 온 도구(uv/bun/qmd)는 설정이 아니다."""
+        """클라이언트 설정만. 받아 온 도구(uv/bun)는 설정이 아니다."""
         out = {}
         for path in (self.codex_hooks, self.claude_settings, self.codex_guide,
                      self.claude_guide, self.mcp_state):
@@ -393,27 +368,27 @@ class DryRunTest(InstallerCase):
         # 버전을 물으면 그 도구들이 제 캐시를 만드는데, 그건 우리가 쓴 것이
         # 아니고 사용자 설정도 아니다.
         before = self.config_snapshot()
-        self.run_installer("install", "--codex", "--claude", "--no-mcp", "--no-qmd", "--dry-run")
+        self.run_installer("install", "--codex", "--claude", "--no-mcp", "--dry-run")
         self.assertEqual(self.config_snapshot(), before)
         self.assertFalse(self.uv_bin.exists())
         self.assertFalse(self.bun_bin.exists())
-        self.assertFalse((self.clone / "index" / "markdown").exists())
+        self.assertFalse((self.clone / "index" / "search.sqlite").exists())
 
     def test_dry_run_reports_the_planned_command_and_targets(self) -> None:
-        out = self.run_installer("install", "--codex", "--claude", "--no-mcp", "--no-qmd", "--dry-run").stdout
+        out = self.run_installer("install", "--codex", "--claude", "--no-mcp", "--dry-run").stdout
         plan = json.loads(out[out.index("{"):out.rindex("}") + 1])
         self.assertIn(str(self.clone), plan["command"])
         self.assertEqual(plan["clients"]["codex"]["hooks_file"], str(self.codex_hooks))
         self.assertEqual(plan["clients"]["codex"]["installed_group"], -1)
 
-    def test_dry_run_with_qmd_neither_exports_nor_calls_qmd_destructively(self) -> None:
-        self.stub("qmd", FAKE_QMD)
-        self.run_installer("install", "--codex", "--claude", "--no-mcp", "--dry-run",
-                           "--with-qmd")
-        self.assertFalse((self.clone / "index" / "markdown").exists())
-        calls = self.qmd_log.read_text(encoding="utf-8") if self.qmd_log.exists() else ""
-        self.assertNotIn("add", calls)
-        self.assertNotIn("remove", calls)
+    def test_legacy_qmd_flags_are_accepted_and_ignored(self) -> None:
+        # 옛 설치 명령이 그대로 돌아야 한다 — qmd 는 더 이상 준비하지 않는다.
+        before = self.config_snapshot()
+        proc = self.run_installer("install", "--codex", "--claude", "--no-mcp", "--dry-run",
+                                  "--with-qmd", "--qmd-name", "whatever")
+        self.assertIn("qmd 옵션은 더 이상 쓰지 않는다", proc.stderr)
+        self.assertEqual(self.config_snapshot(), before)
+        self.assertEqual(self.net_calls(), "")
 
 
 # --------------------------------------------------------------------------- 병합
@@ -512,26 +487,24 @@ class UninstallTest(InstallerCase):
         self.assertEqual(self.read(self.codex_hooks), FOREIGN_CODEX)
         self.assertEqual(set(before) - set(self.snapshot()), set())
 
-    def test_uninstall_never_removes_a_qmd_collection(self) -> None:
-        self.stub("qmd", FAKE_QMD)
+    def test_uninstall_reports_backups(self) -> None:
         self.install()
-        self.uninstall("--with-qmd")
-        calls = self.qmd_log.read_text(encoding="utf-8") if self.qmd_log.exists() else ""
-        self.assertNotIn("collection remove", calls)
+        proc = self.run_installer("uninstall", "--codex", "--claude", "--no-mcp")
+        self.assertIn("남은 백업", proc.stdout)
 
 
 # --------------------------------------------------------------------------- 선택
 class ClientSelectionTest(InstallerCase):
     def test_claude_only_leaves_codex_untouched(self) -> None:
         original = self.codex_hooks.read_text(encoding="utf-8")
-        self.run_installer("install", "--claude", "--no-mcp", "--no-qmd", "-q")
+        self.run_installer("install", "--claude", "--no-mcp", "--no-bun", "-q")
         self.assertEqual(self.codex_hooks.read_text(encoding="utf-8"), original)
         self.assertTrue(self.claude_guide.exists())
         self.assertEqual(len(self.read(self.claude_settings)["hooks"]["UserPromptSubmit"]), 2)
 
     def test_codex_only_leaves_claude_untouched(self) -> None:
         original = self.claude_settings.read_text(encoding="utf-8")
-        self.run_installer("install", "--codex", "--no-mcp", "--no-qmd", "-q")
+        self.run_installer("install", "--codex", "--no-mcp", "--no-bun", "-q")
         self.assertEqual(self.claude_settings.read_text(encoding="utf-8"), original)
         self.assertFalse(self.claude_guide.exists())
 
@@ -542,7 +515,7 @@ class ClientSelectionTest(InstallerCase):
         self.assertEqual(len(self.read(self.codex_hooks)["hooks"]["UserPromptSubmit"]), 2)
 
     def test_no_detected_client_is_a_clear_error(self) -> None:
-        proc = self.run_installer("install", "--no-qmd", "-q", expect=1)
+        proc = self.run_installer("install", "-q", expect=1)
         self.assertIn("설치할 클라이언트가 없다", proc.stderr)
 
 
@@ -566,42 +539,10 @@ class EnvironmentTest(InstallerCase):
         self.assertIn("scripts/install.sh", self.run_installer("--help").stdout)
 
     def test_python_override_is_pinned_into_the_hook(self) -> None:
-        self.run_installer("install", "--codex", "--no-mcp", "--no-qmd", "-q",
+        self.run_installer("install", "--codex", "--no-mcp", "--no-bun", "-q",
                            "--python", "/usr/bin/python3")
         command = self.read(self.codex_hooks)["hooks"]["UserPromptSubmit"][1]["hooks"][0]["command"]
         self.assertIn("/usr/bin/python3", command)
-
-
-# --------------------------------------------------------------------------- qmd
-class QmdTest(InstallerCase):
-    def test_qmd_is_not_touched_without_the_flag(self) -> None:
-        self.stub("qmd", FAKE_QMD)
-        self.install()
-        self.assertFalse(self.qmd_log.exists() and self.qmd_log.read_text(encoding="utf-8").strip())
-
-    def test_qmd_collection_is_created_when_absent(self) -> None:
-        self.stub("qmd", FAKE_QMD)
-        self.install("--with-qmd")
-        calls = self.qmd_log.read_text(encoding="utf-8")
-        self.assertIn("collection add", calls)
-        self.assertIn(str(self.clone / "index" / "markdown"), calls)
-        self.assertTrue((self.clone / "index" / "markdown").is_dir())
-
-    def test_a_foreign_collection_with_the_same_name_is_left_alone(self) -> None:
-        self.stub("qmd", FAKE_QMD)
-        proc = self.run_installer("install", "--codex", "--claude", "--no-mcp", "-q",
-                                  "--with-qmd", FAKE_QMD_PATH="/somewhere/not/ours")
-        calls = self.qmd_log.read_text(encoding="utf-8")
-        self.assertNotIn("collection add", calls)
-        self.assertNotIn("collection remove", calls)
-        self.assertIn("건드리지 않는다", proc.stderr)
-
-    def test_missing_qmd_with_no_bootstrap_is_only_a_warning(self) -> None:
-        proc = self.run_installer("install", "--codex", "--claude", "--no-mcp", "-q",
-                                  "--no-bootstrap")
-        self.assertIn("--no-bootstrap", proc.stderr)
-        self.assertEqual(self.net_calls(), "")  # 네트워크를 타지 않는다
-        self.assertEqual(len(self.read(self.codex_hooks)["hooks"]["UserPromptSubmit"]), 2)
 
 
 # --------------------------------------------------------------------------- MCP
@@ -613,7 +554,7 @@ class McpOwnershipTest(InstallerCase):
         self.fake_clients()
 
     def with_mcp(self, command: str, *extra: str) -> subprocess.CompletedProcess[str]:
-        return self.run_installer(command, "--codex", "--claude", "--no-qmd", "-q", *extra)
+        return self.run_installer(command, "--codex", "--claude", "--no-bun", "-q", *extra)
 
     def output(self, proc: subprocess.CompletedProcess[str]) -> str:
         return proc.stdout + proc.stderr
@@ -720,7 +661,7 @@ class SpacedPythonPathTest(InstallerCase):
 
     def spaced_run(self, command: str, *extra: str,
                    expect: int = 0) -> subprocess.CompletedProcess[str]:
-        return self.run_installer(command, "--claude", "--no-mcp", "--no-qmd", "-q",
+        return self.run_installer(command, "--claude", "--no-mcp", "--no-bun", "-q",
                                   "--python", str(self.interpreter), *extra, expect=expect)
 
     def installed_command(self) -> str:
@@ -741,7 +682,7 @@ class SpacedPythonPathTest(InstallerCase):
                               capture_output=True, text=True, env=self.env())
         self.assertEqual(proc.returncode, 0, proc.stderr)
         context = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("page:폐기-icd-코드", context)
+        self.assertIn("폐기-icd-코드", context)
 
     def test_verify_accepts_the_spaced_interpreter(self) -> None:
         self.spaced_run("install")
@@ -772,13 +713,12 @@ class SpacedPythonPathTest(InstallerCase):
 
 # --------------------------------------------------------------------------- 부트스트랩
 class BootstrapCase(InstallerCase):
-    """없는 도구를 받아 오는 경로. 가짜 curl/wget/uv/bun/qmd 로 네트워크 없이 돈다."""
+    """없는 도구를 받아 오는 경로. 가짜 curl/wget/uv/bun 으로 네트워크 없이 돈다."""
 
     def setUp(self) -> None:
         super().setUp()
         self.payload_file("uv", FAKE_UV)
         self.payload_file("bun", FAKE_BUN)
-        self.payload_file("qmd", FAKE_QMD)
         self.payload_file("uv-install.sh", FAKE_UV_INSTALLER)
         self.payload_file("bun-install.sh", FAKE_BUN_INSTALLER)
 
@@ -821,7 +761,7 @@ class PythonBootstrapTest(BootstrapCase):
         self.uv_python.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n',
                                   encoding="utf-8")
         self.uv_python.chmod(0o755)
-        self.boot("--no-qmd")
+        self.boot("--no-bun")
         self.assertIn(str(self.uv_python), self.hook_command())
         # uv 를 부르기만 했지 아무것도 내려받지 않았다
         self.assertNotIn("astral.sh", self.net_calls())
@@ -829,7 +769,7 @@ class PythonBootstrapTest(BootstrapCase):
         self.assertIn("uv-관리", self.run_installer("doctor").stdout)
 
     def test_system_python_is_used_when_there_is_no_uv(self) -> None:
-        self.boot("--no-qmd")
+        self.boot("--no-bun")
         self.assertIn("시스템", self.run_installer("doctor").stdout)
         self.assertEqual(self.net_calls(), "")
 
@@ -838,7 +778,7 @@ class PythonBootstrapTest(BootstrapCase):
         shim = self.bin / "python3"
         shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
         shim.chmod(0o755)
-        self.boot("--no-qmd")
+        self.boot("--no-bun")
         command = self.hook_command()
         self.assertIn("/usr/bin/python3", command)
         self.assertNotIn(str(shim), command)
@@ -848,7 +788,7 @@ class PythonBootstrapTest(BootstrapCase):
         self.uv_python.parent.mkdir(parents=True)
         self.uv_python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         self.uv_python.chmod(0o755)
-        self.boot("--no-qmd", "--python", sys.executable)
+        self.boot("--no-bun", "--python", sys.executable)
         self.assertIn(sys.executable, self.hook_command())
         self.assertEqual(self.net_calls(), "")
 
@@ -901,7 +841,7 @@ class PythonBootstrapTest(BootstrapCase):
                     break
         proc = subprocess.run(
             [str(self.clone / "scripts" / "install.sh"), "install", "--codex", "--claude",
-             "--no-mcp", "--no-qmd", "-q"],
+             "--no-mcp", "--no-bun", "-q"],
             capture_output=True, text=True, cwd=str(self.tmp),
             env=self.env(PATH=os.pathsep.join([str(self.bin), str(path_without_curl)]),
                          FAKE_UV_INSTALLS_PYTHON="1", **self.no_system_python()))
@@ -910,15 +850,15 @@ class PythonBootstrapTest(BootstrapCase):
         self.assertNotIn("curl ", self.net_calls())
 
 
-class QmdBootstrapTest(BootstrapCase):
-    def test_qmd_is_installed_by_default_through_bun(self) -> None:
+class BunBootstrapTest(BootstrapCase):
+    """viewer 가 쓰는 Bun. 저장소 규칙(1.3.14)대로 사용자 영역에 받아 온다."""
+
+    def test_bun_is_installed_by_default(self) -> None:
         self.boot()
         calls = self.net_calls()
         self.assertIn("bun.sh/install", calls)
         self.assertIn("bun-installer", calls)
-        self.assertIn(f"bun install -g {QMD_PACKAGE}", calls)
         self.assertTrue(self.bun_bin.exists())
-        self.assertTrue(self.qmd_bin.exists())
 
     def test_bun_is_pinned_to_the_repository_version_and_stays_user_local(self) -> None:
         self.boot()
@@ -930,19 +870,11 @@ class QmdBootstrapTest(BootstrapCase):
         for profile in (".zshrc", ".bashrc", ".bash_profile", ".profile"):
             self.assertFalse((self.home / profile).exists(), profile)
 
-    def test_the_collection_is_prepared_after_a_successful_qmd_install(self) -> None:
-        self.boot()
-        calls = self.qmd_log.read_text(encoding="utf-8")
-        self.assertIn("collection add", calls)
-        self.assertIn(str(self.clone / "index" / "markdown"), calls)
-        self.assertTrue((self.clone / "index" / "markdown").is_dir())
-
     def test_an_existing_bun_is_used_and_never_replaced(self) -> None:
         self.stub("bun", FAKE_BUN)
         self.boot(FAKE_BUN_VERSION="1.2.0")
-        calls = self.net_calls()
-        self.assertNotIn("bun.sh/install", calls)
-        self.assertIn(f"bun install -g {QMD_PACKAGE}", calls)
+        self.assertNotIn("bun.sh/install", self.net_calls())
+        self.assertFalse(self.bun_bin.exists())
 
     def test_an_existing_bun_of_another_version_only_warns(self) -> None:
         self.stub("bun", FAKE_BUN)
@@ -950,28 +882,25 @@ class QmdBootstrapTest(BootstrapCase):
         self.assertIn("1.2.0", proc.stderr)
         self.assertIn("그대로 쓴다", proc.stderr)
 
-    def test_an_existing_qmd_skips_the_whole_bootstrap(self) -> None:
-        self.stub("qmd", FAKE_QMD)
-        self.boot()
-        self.assertEqual(self.net_calls(), "")
-        self.assertIn("collection add", self.qmd_log.read_text(encoding="utf-8"))
-
-    def test_no_qmd_skips_bun_and_qmd_entirely(self) -> None:
-        self.boot("--no-qmd")
+    def test_no_bun_skips_the_bun_bootstrap_entirely(self) -> None:
+        proc = self.boot("--no-bun")
         self.assertEqual(self.net_calls(), "")
         self.assertFalse(self.bun_bin.exists())
-        self.assertFalse((self.clone / "index" / "markdown").exists())
+        self.assertNotIn("도구 준비", proc.stdout)
+
+    def test_missing_bun_with_no_bootstrap_is_only_a_warning(self) -> None:
+        proc = self.boot("--no-bootstrap")
+        self.assertIn("--no-bootstrap", proc.stderr)
+        self.assertIn("Bun", proc.stderr)
+        self.assertEqual(self.net_calls(), "")  # 네트워크를 타지 않는다
+        self.assertFalse(self.bun_bin.exists())
+        # hook 은 Bun 과 무관하므로 그대로 설치된다.
+        self.assertEqual(len(self.read(self.codex_hooks)["hooks"]["UserPromptSubmit"]), 2)
 
     def test_a_bun_install_failure_aborts_before_touching_config(self) -> None:
         before = self.config_snapshot()
         proc = self.boot(expect=1, FAKE_BUN_INSTALL_FAIL="1")
         self.assertIn("Bun 1.3.14 설치가 실패했다", proc.stderr)
-        self.assertEqual(self.config_snapshot(), before)
-
-    def test_a_qmd_install_failure_aborts_before_touching_config(self) -> None:
-        before = self.config_snapshot()
-        proc = self.boot(expect=1, FAKE_BUN_INSTALL_G_FAIL="1")
-        self.assertIn(f"bun install -g {QMD_PACKAGE}", proc.stderr)
         self.assertEqual(self.config_snapshot(), before)
 
     def test_bootstrap_is_idempotent(self) -> None:
@@ -981,6 +910,13 @@ class QmdBootstrapTest(BootstrapCase):
         self.boot()
         self.assertEqual(self.net_calls(), "")  # 두 번째는 받아 오지 않는다
         self.assertEqual(self.snapshot(), first)
+
+    def test_doctor_and_verify_never_install_bun(self) -> None:
+        for command, exit_code in (("doctor", 0), ("verify", 1)):  # 미설치라 verify 는 1
+            self.net_log.unlink(missing_ok=True)
+            self.run_installer(command, "--codex", "--claude", expect=exit_code)
+            self.assertEqual(self.net_calls(), "", command)
+            self.assertFalse(self.bun_bin.exists(), command)
 
 
 class BootstrapDryRunTest(BootstrapCase):
@@ -992,10 +928,9 @@ class BootstrapDryRunTest(BootstrapCase):
         self.assertEqual(self.config_snapshot(), before)
         self.assertFalse(self.uv_bin.exists())
         self.assertFalse(self.bun_bin.exists())
-        self.assertFalse((self.clone / "index" / "markdown").exists())
+        self.assertFalse((self.clone / "index" / "search.sqlite").exists())
         self.assertIn("uv 를 받아", out)
         self.assertIn("Bun 1.3.14 설치", out)
-        self.assertIn(f"bun install -g {QMD_PACKAGE}", out)
 
     def test_dry_run_reports_the_downloader_it_would_use(self) -> None:
         out = self.run_installer("doctor", **self.no_system_python()).stdout
@@ -1008,7 +943,8 @@ class BootstrapReportTest(BootstrapCase):
         out = self.run_installer("doctor").stdout
         self.assertRegex(out, r"python .*\[3\.\d+\.\d+, 시스템\]")
         self.assertIn("bun             " + str(self.bun_bin), out)
-        self.assertIn("qmd 0.0.0-fake, 기존", out)
+        self.assertIn("1.3.14, 기존", out)
+        self.assertIn("검색 색인       index/search.sqlite", out)
         self.assertIn("부트스트랩      허용", out)
 
     def test_doctor_marks_bootstrap_as_forbidden(self) -> None:
@@ -1038,13 +974,11 @@ class SpacedHomeBootstrapTest(BootstrapCase):
         self.uv_bin = self.home / ".local" / "bin" / "uv"
         self.uv_python = self.home / "uv-python" / "python3"
         self.bun_bin = self.home / ".bun" / "bin" / "bun"
-        self.qmd_bin = self.home / ".bun" / "bin" / "qmd"
 
-    def test_uv_bun_and_qmd_all_land_under_the_spaced_home(self) -> None:
+    def test_uv_and_bun_land_under_the_spaced_home(self) -> None:
         self.boot(FAKE_UV_INSTALLS_PYTHON="1", **self.no_system_python())
         self.assertTrue(self.uv_bin.exists())
         self.assertTrue(self.bun_bin.exists())
-        self.assertTrue(self.qmd_bin.exists())
         command = self.hook_command()
         self.assertIn(f"'{self.uv_python}'", command)
 
@@ -1056,7 +990,7 @@ class SpacedHomeBootstrapTest(BootstrapCase):
                               capture_output=True, text=True, env=self.env())
         self.assertEqual(proc.returncode, 0, proc.stderr)
         context = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("page:폐기-icd-코드", context)
+        self.assertIn("폐기-icd-코드", context)
 
 
 # --------------------------------------------------------------------------- verify
@@ -1114,7 +1048,7 @@ class TrustStateTest(InstallerCase):
         """명령이 바뀌면 Codex 는 다시 묻는다 — verify 가 trusted 라고 하면 거짓말이다."""
         hooks = self.codex_hooks
         config = self.home / ".codex" / "config.toml"
-        self.run_installer("install", "--codex", "--no-mcp", "--no-qmd", "-q",
+        self.run_installer("install", "--codex", "--no-mcp", "--no-bun", "-q",
                            "--python", "/usr/bin/python3")
         # Codex 가 그 명령을 신뢰한 상태를 만든다.
         config.write_text(
@@ -1125,7 +1059,7 @@ class TrustStateTest(InstallerCase):
         self.assertIn("ok   codex.trust: trusted", out)
 
         # 인터프리터를 바꿔 다시 설치하면 그 신뢰는 무효가 된다.
-        self.run_installer("install", "--codex", "--no-mcp", "--no-qmd", "-q",
+        self.run_installer("install", "--codex", "--no-mcp", "--no-bun", "-q",
                            "--python", sys.executable)
         out = self.run_installer("verify", "--codex", "-q", "--python", sys.executable,
                                  expect=1).stdout

@@ -16,11 +16,11 @@ wiki/syntheses/        종합·비교·분석 JSON 페이지
 wiki/projects/         프로젝트 허브 JSON 페이지
 wiki/log.jsonl         append-only 작업 로그
 raw/                   불변 원본 소스 큐 + 기존 live source symlink
-index/                 재생성 가능한 catalog/map/search/graph/routes/stats
-index/markdown/        qmd 인덱싱용 렌더 Markdown (선택, 파생물)
+index/                 재생성 가능한 catalog/map/graph/routes/stats/revision + search.sqlite(검색 색인)
 tools/schema/          JSON Schema
 tools/config/          프로젝트 그룹·색상 설정
-scripts/llmwiki.py     ingest/build/query/get/render/outline/export-md/lint/log CLI
+scripts/llmwiki.py     ingest/build/query/get/render/outline/lint/log CLI
+scripts/llmwiki_index.py  검색 색인(`index/search.sqlite`) build·검색·부분 그래프 렌더 (표준 라이브러리만)
 scripts/llmwiki_context.py  Codex·Claude 자동 컨텍스트 주입 hook/MCP CLI
 scripts/llmwiki_routine.py  주기 ingest 루틴 (스케줄러 등록·git 연동)
 scripts/install.sh     자동 주입 설치·검증·제거 (POSIX, macOS/Linux)
@@ -46,7 +46,7 @@ bun install
 bun run dev
 ```
 
-`index/`와 `viewer/public/data/`는 커밋하지 않는 파생물이라 clone 직후에는 비어 있습니다. 위 `build`가 채우고, 개발 서버는 뜰 때와 `wiki/**/*.json`이 바뀔 때마다 다시 만듭니다.
+`index/`와 `viewer/public/data/`는 커밋하지 않는 파생물이라 clone 직후에는 비어 있습니다. 위 `build`가 채우고, 개발 서버는 뜰 때와 `wiki/**/*.json`이 바뀔 때마다 다시 만듭니다 — 이때는 바뀐 파일 경로를 `build --changed`로 넘겨 색인의 그 page 행만 갈아 끼웁니다(증분). 증분 build는 `index/search.work.sqlite`(작업 DB, WAL)를 고친 뒤 빈 파일에 같은 DDL·PK 순으로 다시 써 `index/search.sqlite`를 발행하므로 cold build와 헤더까지 바이트가 같고, 훅은 발행본만 읽어 갱신 중에도 막히지 않습니다. 힌트는 힌트일 뿐이라 지난 build가 파일마다 기록한 (mtime, size)와 다른 파일은 sha로 확인하고, 힌트 밖의 변경이 보이면 스스로 전량으로 떨어집니다.
 
 viewer가 CLI를 부를 때 쓰는 Python은 `LLMWIKI_PYTHON` → `python3` → `python` → `py` 순으로 찾습니다. `python3`라는 이름이 없는 기계(Windows, uv로 받은 Python만 있는 기계)에서는 `LLMWIKI_PYTHON`에 실행 파일 절대경로를 주거나 `scripts/install.sh`(Windows는 `scripts\install.ps1`)로 마련하십시오.
 
@@ -69,19 +69,18 @@ python3 scripts/llmwiki.py query "검색어"
 
 ## CLI
 
-모든 명령은 `--root`(또는 `LLMWIKI_ROOT`)로 대상 저장소를 바꿀 수 있고, `build`/`validate`/`lint`/`query`/`get`/`render`/`outline`/`export-md`는 `--fixtures`로 데모 트리를 읽습니다.
+모든 명령은 `--root`(또는 `LLMWIKI_ROOT`)로 대상 저장소를 바꿀 수 있고, `build`/`validate`/`lint`/`query`/`get`/`render`/`outline`은 `--fixtures`로 데모 트리를 읽습니다.
 
 | 명령 | 하는 일 |
 | --- | --- |
 | `ingest <파일>` | raw 소스 1건을 정본 page로 기록. `--type` `--project` `--summary` `--update` `--dry-run` |
-| `build` | 정본 → `index/*.json` + `viewer/public/data/**` 결정적 재생성 |
+| `build` | 정본 → `index/*.json` + `index/search.sqlite` + `viewer/public/data/**` 결정적 재생성. `--changed <파일…>`(바뀐 파일 힌트 — 그 page 만 색인에 갈아 끼우는 증분, 힌트 밖 변경이 보이면 전량), `--full`, `--heading-paths`(H6, 기본 꺼짐) |
 | `validate` | 스키마·구조 검증 (오류만) |
 | `lint` | 오류 + 경고: 미존재 링크, 미판정 상충, 고아, 빈 summary, stale index. `--json` |
-| `query "질의"` | 정본에서 직접 점수화 (제목 8 / summary 2 / 본문 1). `--limit` |
+| `query "질의"` | 검색 색인으로 page 순위 (신선한 `index/search.sqlite`, 없거나 낡으면 정본에서 메모리 색인). `--limit` |
 | `get <주소>` | page·block projection. `--block` `--field` `--pointer` |
 | `render <주소>` | `--format md\|html\|json`, `--exact`, `--section <heading block id>` |
 | `outline <주소>` | heading block 목록 — 페이지 통독 없이 섹션만 고를 때 |
-| `export-md` | 렌더 Markdown + manifest 생성 (qmd 인덱싱용). `--out` |
 | `log` | `--action/--page/--note`로 append, 인자 없으면 `--show N`으로 조회 |
 
 ### 소스 frontmatter
@@ -128,7 +127,7 @@ block id는 `block:<slug>:<내용 지문>:<중복 순번>` 형태라, 페이지 
 
 ## 자동 컨텍스트 주입
 
-`scripts/llmwiki_context.py`는 Codex와 Claude Code의 `UserPromptSubmit` hook으로 붙어, 질문마다 정본에서 근거를 찾아 `<llmwiki-context>` 블록으로 주입합니다. 검색과 주입 본문 모두 `wiki/**/*.json`에서만 나오고, qmd는 후보 slug 탐색에만 씁니다. 주입되는 것은 언제나 질문과 맞물린 block들이지 page 통짜가 아닙니다. 관련도가 어중간하면 본문 대신 **page 주소 3줄**만 주고, 무관하면 아무것도 주입하지 않습니다. 어떤 오류에서도 질문을 막지 않습니다.
+`scripts/llmwiki_context.py`는 Codex와 Claude Code의 `UserPromptSubmit` hook으로 붙어, 질문마다 근거를 찾아 `<llmwiki-context v=3>` 블록(P/B/E 부분 그래프)으로 주입합니다. 검색은 `build`가 정본에서 굽는 `index/search.sqlite`로 하고, 색인이 없거나 낡으면 정본 `wiki/**/*.json`에서 메모리 색인을 만들어 같은 형식으로 주입하며, 그 build마저 실패하면 옛 스캔 경로로 떨어집니다(fail-open, `docs/context-injection.md`의 세 경로 표). 주입되는 것은 질문과 맞물린 block들이지 page 통짜가 아니고, 긴 block은 질문과 겹치는 행만 320자 안에서 싣습니다. supersedes로 대체된 낡은 page는 `sup→새 page` 한 줄만 나옵니다. 정본과 한 토큰도 겹치지 않으면 아무것도 주입하지 않고, 무주입 문턱은 옵션(`LLMWIKI_CONTEXT_SILENCE`)입니다. 어떤 오류에서도 질문을 막지 않습니다.
 
 설치는 스크립트 하나로 끝납니다. clone 경로는 어디여도 되고, 스크립트가 자기 위치에서 repo root를 찾습니다.
 
@@ -146,9 +145,9 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -DryRun
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-기존 hook 그룹·설정·지침 본문은 읽은 그대로 되돌려 쓰고, 남의 qmd collection과 이미 등록된 MCP 서버는 건드리지 않습니다. 설치 직전 상태는 `<파일>.llmwiki-bak`으로 남습니다.
+기존 hook 그룹·설정·지침 본문은 읽은 그대로 되돌려 쓰고, 이미 등록된 MCP 서버는 건드리지 않습니다. 설치 직전 상태는 `<파일>.llmwiki-bak`으로 남습니다.
 
-필요한 도구는 사용자 영역에 받아 옵니다 — Python 3.9+가 없으면 uv로, qmd가 없으면 Bun 1.3.14 + `@tobilu/qmd`로. shell profile과 시스템 경로는 건드리지 않고, 이미 있는 것은 갈아치우지 않습니다. `--no-bootstrap`으로 네트워크 설치를 전면 금지할 수 있고 `--dry-run`은 네트워크조차 타지 않습니다.
+필요한 도구는 사용자 영역에 받아 옵니다 — Python 3.9+가 없으면 uv로, viewer가 쓰는 Bun이 없으면 공식 설치기로 정확히 1.3.14를 `~/.bun`에. 검색 색인은 별도 도구 없이 `build`가 만듭니다 (qmd는 더 이상 쓰지 않습니다). shell profile과 시스템 경로는 건드리지 않고, 이미 있는 것은 갈아치우지 않습니다. viewer를 쓰지 않으면 `--no-bun`으로 Bun 단계만 건너뛰고, `--no-bootstrap`으로 네트워크 설치를 전면 금지할 수 있으며 `--dry-run`은 네트워크조차 타지 않습니다.
 
 조회만 직접 하고 싶을 때:
 
@@ -199,17 +198,6 @@ git push private HEAD:main                                            # 위키�
 
 설치 옵션·지원 범위·Codex hook 신뢰 절차는 [`docs/install.md`](docs/install.md), 동작 원리와 hook 스키마 차이는 [`docs/context-injection.md`](docs/context-injection.md)에 있습니다.
 
-### qmd 인덱싱
-
-`scripts/install.sh`가 기본으로 처리합니다(qmd가 없으면 설치까지). 직접 하려면:
-
-```bash
-python3 scripts/llmwiki.py export-md
-qmd collection add "$PWD/index/markdown" --name llmwiki_json && qmd embed
-```
-
-`index/markdown/`은 매 실행마다 통째로 다시 만드는 파생물입니다 — 직접 수정하지 마세요.
-
 ## 테스트
 
 ```bash
@@ -233,8 +221,8 @@ python3 tools/parity/parity.py corpus    # Python↔Bun 원시 의미론 대조
 - `wiki/`의 JSON 페이지만 정본이다. Markdown/HTML 화면과 모든 index/map/graph는 JSON에서 만든 파생물이다.
 - 모든 페이지·블록은 위치가 아닌 영속 ID로 주소 지정한다.
 - 원문 ingest 시 `source_snapshot`을 보존해 `render --exact`로 exact Markdown round-trip을 지원한다.
-- `build`는 결정적이다 — 같은 입력이면 두 번 돌려도 바이트 단위로 같은 산출물이 나오고, 산출물에 담기는 경로는 저장소 상대 경로다. `python3 tools/parity/parity.py build`가 임시 저장소에서 이것을 실제 산출물로 확인한다([docs/parity.md](docs/parity.md)).
-- index/map/graph/search/viewer public data와 `index/markdown/`은 언제든 정본에서 재생성할 수 있다.
+- `build`는 결정적이다 — 같은 입력이면 두 번 돌려도 바이트 단위로 같은 산출물이 나오고, 산출물에 담기는 경로는 저장소 상대 경로다. 증분 build(`--changed`)도 같은 정본의 cold build와 바이트가 같다. `python3 tools/parity/parity.py build`가 임시 저장소에서 둘 다 실제 산출물로 확인한다([docs/parity.md](docs/parity.md)).
+- index/map/graph/viewer public data와 `index/search.sqlite`는 언제든 정본에서 재생성할 수 있다.
 - 자격증명·접속정보·API 키·토큰·연결 문자열을 기록하지 않는다. ingest가 값이 붙은 형태를 발견하면 거부한다.
 
 ## 라이선스

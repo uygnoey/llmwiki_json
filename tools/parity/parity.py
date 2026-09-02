@@ -14,7 +14,12 @@
 
 `build`
     `llmwiki.py build` 를 shadow 디렉터리에 두 번 돌려 산출물이 바이트 단위로
-    같은지 본다. 공식 `index/` 와 `viewer/public/data/` 는 건드리지 않는다.
+    같은지 본다. `index/search.sqlite` 도 바이트로 대조한다 — 빈 파일에 같은 DDL·PK
+    순으로 다시 써 publish 하므로 같은 입력이면 헤더까지 같은 바이트다. 바이트가 다르면 `revision.json` 의
+    `search_root`(논리 덤프 sha) 까지 같은지 따로 적어 원인을 가른다.
+    세 번째로 cold build 뒤 page 하나를 고쳐 `--changed` 증분 build 를 돌리고, 같은
+    정본의 cold build 와 산출물(search.sqlite 포함) 바이트를 대조한다.
+    공식 `index/` 와 `viewer/public/data/` 는 건드리지 않는다.
     `--candidate '<명령>'` 을 주면 그 명령을 세 번째 build 로 보고 같은 방식으로
     대조한다 — 나중에 TS build 가 생기면 그대로 꽂으면 된다.
 
@@ -27,6 +32,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -162,7 +168,10 @@ def fingerprint(root: Path) -> dict[str, str]:
         if not base.exists():
             continue
         for path in sorted(base.rglob("*")):
-            if path.is_file():
+            # WAL 사이드카(-wal/-shm)는 누가 읽었는지의 흔적이지 산출물이 아니다. 증분 build 의 작업 DB
+            # (search.work.sqlite) 와 상태 파일(search.work.json, 시작 시각) 도 발행물이 아니다.
+            if (path.is_file() and not path.name.endswith(("-wal", "-shm"))
+                    and not path.name.startswith("search.work.")):
                 out[path.relative_to(root).as_posix()] = hashlib.sha256(
                     path.read_bytes()).hexdigest()
     return out
@@ -182,7 +191,57 @@ def shadow_build(command: list[str], label: str) -> dict[str, str]:
         proc = subprocess.run(command, capture_output=True, text=True, cwd=shadow, env=env)
         if proc.returncode != 0:
             raise SystemExit(f"{label} build 실패 (exit {proc.returncode})\n{proc.stderr}")
-        return fingerprint(shadow)
+        prints = fingerprint(shadow)
+        prints["#search_logical"] = logical_digest(shadow / "index" / "search.sqlite")
+        return prints
+
+
+def logical_digest(path: Path) -> str:
+    """색인의 표 내용 지문 (PK 순 canonical 직렬화, sqlite 버전·페이지 배치와 무관). 바이트가 달라도
+    이 값이 같으면 표 내용은 같은 것 — 결정성이 깨진 곳이 sqlite 파일 배치인지 내용인지 가른다."""
+    if not path.is_file():
+        return ""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import llmwiki_index  # noqa: E402  (표준 라이브러리만 쓰는 모듈)
+    db = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
+    try:
+        return llmwiki_index.logical_digest(db)
+    finally:
+        db.close()
+
+
+def incremental_pair(command: list[str]) -> tuple[dict[str, str], dict[str, str]]:
+    """같은 shadow 에서 (cold → 편집 → `--changed` 증분) 과 (편집된 정본의 cold) 의 지문 쌍."""
+    with tempfile.TemporaryDirectory(prefix="llmwiki-parity-inc-") as tmp:
+        shadow = Path(tmp) / "repo"
+        shadow.mkdir()
+        for rel in ("wiki", "tools/config", "tools/schema", "scripts"):
+            source = ROOT / rel
+            if source.exists():
+                shutil.copytree(source, shadow / rel, ignore=shutil.ignore_patterns("__pycache__"))
+        env = {**os.environ, "LLMWIKI_ROOT": str(shadow)}
+
+        def run(argv: list[str], label: str) -> None:
+            proc = subprocess.run(argv, capture_output=True, text=True, cwd=shadow, env=env)
+            if proc.returncode != 0:
+                raise SystemExit(f"{label} build 실패 (exit {proc.returncode})\n{proc.stderr}")
+
+        run(command, "python#cold")
+        target = next((p for p in sorted((shadow / "wiki").rglob("*.json")) if p.name != "log.jsonl"), None)
+        if target is None:
+            prints = fingerprint(shadow)
+            return prints, prints
+        pages = json.loads(target.read_text(encoding="utf-8"))
+        page = pages[0] if isinstance(pages, list) else pages
+        page["summary"] = (page.get("summary") or "") + " (parity 증분 확인)"
+        target.write_text(json.dumps(pages, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        run([*command, "--changed", target.relative_to(shadow).as_posix()], "python#incremental")
+        inc = fingerprint(shadow)
+        inc["#search_logical"] = logical_digest(shadow / "index" / "search.sqlite")
+        run([*command, "--full"], "python#cold2")
+        cold = fingerprint(shadow)
+        cold["#search_logical"] = logical_digest(shadow / "index" / "search.sqlite")
+        return inc, cold
 
 
 def build(args: argparse.Namespace) -> int:
@@ -193,7 +252,15 @@ def build(args: argparse.Namespace) -> int:
         "files": len(first),
         "self_consistent": first == second,
         "differing": sorted(k for k in set(first) | set(second) if first.get(k) != second.get(k)),
+        "search_index_bytes_identical": first.get("index/search.sqlite") == second.get("index/search.sqlite"),
+        "search_root_identical": first.get("#search_logical") == second.get("#search_logical"),
     }
+    # 세 번째: cold build 뒤 page 하나를 고쳐 증분(--changed) 으로 굽고, 같은 정본의 cold build 와 대조한다.
+    if not args.candidate:
+        inc, cold = incremental_pair(oracle_cmd)
+        report["incremental_matches_full"] = inc == cold
+        report["incremental_differing"] = sorted(k for k in set(inc) | set(cold) if inc.get(k) != cold.get(k))
+        report["incremental_search_root_identical"] = inc.get("#search_logical") == cold.get("#search_logical")
     if args.candidate:
         candidate = shadow_build(args.candidate.split(), "candidate")
         report["candidate_files"] = len(candidate)
@@ -208,8 +275,15 @@ def build(args: argparse.Namespace) -> int:
     else:
         print(f"산출물 파일 수      : {report['files']}")
         print(f"두 번 돌려 동일     : {'예' if report['self_consistent'] else '아니오'}")
+        print(f"search.sqlite 바이트: {'동일' if report['search_index_bytes_identical'] else '다름'}"
+              f" (search_root {'동일' if report['search_root_identical'] else '다름'})")
         if report["differing"]:
             print(f"  달라진 파일: {', '.join(report['differing'])}")
+        if "incremental_matches_full" in report:
+            print(f"증분 build == cold     : {'예' if report['incremental_matches_full'] else '아니오'}"
+                  f" (search_root {'동일' if report['incremental_search_root_identical'] else '다름'})")
+            if report["incremental_differing"]:
+                print(f"  달라진 파일: {', '.join(report['incremental_differing'])}")
         if args.candidate:
             print(f"후보 구현과 동일    : {'예' if report['candidate_matches'] else '아니오'}")
             for key, label in (("candidate_only", "후보에만 있는 파일"),
@@ -217,7 +291,7 @@ def build(args: argparse.Namespace) -> int:
                                ("content_differs", "내용이 다른 파일")):
                 if report.get(key):
                     print(f"  {label}: {', '.join(report[key])}")
-    if not report["self_consistent"]:
+    if not report["self_consistent"] or not report.get("incremental_matches_full", True):
         return 1
     return 0 if not args.candidate or report["candidate_matches"] else 1
 

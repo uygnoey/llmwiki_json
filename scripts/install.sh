@@ -10,12 +10,13 @@
 #   Linux           — 같은 POSIX 경로로 동작 (CI/서버)
 #   그 외 (WSL 밖 Windows, *BSD) — 미검증. --force 로 강행할 수 있다.
 #
-# 없는 도구는 사용자 영역에 받아 온다 — Python 은 uv, qmd 는 Bun. 어느 쪽도
+# 없는 도구는 사용자 영역에 받아 온다 — Python 은 uv, viewer 가 쓰는 Bun 은
+# 공식 설치기(v1.3.14 고정). 어느 쪽도
 # shell profile 이나 시스템 경로를 건드리지 않고, 받은 절대경로를 바로 쓴다.
 # --no-bootstrap 으로 네트워크 설치를 전부 끌 수 있고, --dry-run 은 계획만 보여준다.
 #
-# 이 스크립트는 wiki/ 정본과 raw/ 를 절대 건드리지 않는다. index/markdown 은
-# 정식 `llmwiki.py export-md` 로만 다시 만든다.
+# 이 스크립트는 wiki/ 정본과 raw/ 를 절대 건드리지 않는다. 검색 색인
+# (index/search.sqlite) 은 정식 `llmwiki.py build` 로만 만든다.
 #
 # 사용법:  scripts/install.sh [install|verify|uninstall|doctor] [옵션]
 set -eu
@@ -48,14 +49,14 @@ DRY_RUN=0
 FORCE=0
 WANT_CODEX=0
 WANT_CLAUDE=0
-WITH_QMD=1
+WITH_BUN=1
+LEGACY_QMD_FLAG=0
 WITH_MCP=1
 WITH_GUIDES=1
 BOOTSTRAP=1
 PYTHON=""
 PYTHON_OPT=""
 MCP_NAME=llmwiki
-QMD_NAME=llmwiki_json
 QUIET=0
 # 주기 ingest 루틴과 개인 저장소. 기본은 "묻는다" 이고, 비대화형에서는 건너뛴다.
 ROUTINE=ask
@@ -66,10 +67,10 @@ PRIVATE=ask
 ASK=1
 REMOTE_NAME=private
 
-# 부트스트랩 대상. 저장소 규칙상 package manager 는 Bun 뿐이고 버전은 고정이다
-# (npm/yarn/pnpm 금지). qmd 는 공식 패키지에서만 받는다.
+# 부트스트랩 대상은 Python(uv) 과 viewer 가 쓰는 Bun 이다. 저장소 규칙상
+# package manager 는 Bun 뿐이고 버전은 고정이다 (npm/yarn/pnpm 금지). qmd 는
+# 더 이상 받지 않는다 — 검색은 `llmwiki.py build` 가 만드는 index/search.sqlite 가 한다.
 BUN_VERSION=1.3.14
-QMD_PACKAGE=@tobilu/qmd
 UV_INSTALLER_URL=https://astral.sh/uv/install.sh
 BUN_INSTALLER_URL=https://bun.sh/install
 UV_DIR=${UV_INSTALL_DIR:-$HOME/.local/bin}
@@ -83,8 +84,6 @@ UV_BIN=""
 UV_SOURCE=""
 BUN_BIN=""
 BUN_SOURCE=""
-QMD_BIN=""
-QMD_SOURCE=""
 
 usage() {
     cat <<'USAGE'
@@ -103,14 +102,16 @@ llmwiki_json 자동 컨텍스트 주입 설치
   -n, --dry-run       바뀔 내용만 보여주고 아무것도 쓰지 않는다 (네트워크도 안 탄다)
       --codex         Codex 만 대상으로 한다
       --claude        Claude Code 만 대상으로 한다
-      --no-qmd        qmd 설치와 collection 준비를 건너뛴다
-      --with-qmd      (기본값) qmd 를 준비한다 — 옛 이름, 남겨 둔다
+      --no-bun        viewer 용 Bun 부트스트랩을 건너뛴다
+      --with-bun      (기본값) viewer 용 Bun 1.3.14 를 준비한다
+      --no-qmd        (옛 옵션, 무시된다) qmd 는 더 이상 쓰지 않는다
+      --with-qmd      (옛 옵션, 무시된다)
       --no-bootstrap  없는 도구를 받아 오지 않는다 (네트워크 설치 전면 금지)
       --no-mcp        MCP 서버 등록을 건너뛴다
       --no-guides     ~/.codex/AGENTS.md, ~/.claude/CLAUDE.md 를 건드리지 않는다
       --python P      쓸 인터프리터 절대경로 — 자동 선택보다 항상 우선한다
       --mcp-name N    MCP 서버 이름 (기본 llmwiki)
-      --qmd-name N    qmd collection 이름 (기본 llmwiki_json)
+      --qmd-name N    (옛 옵션, 무시된다)
       --force         미지원 OS 나 미감지 클라이언트에서도 강행한다
   -q, --quiet         진행 로그를 줄인다
   -h, --help          이 도움말
@@ -136,8 +137,9 @@ llmwiki_json 자동 컨텍스트 주입 설치
 
 받아 오는 것 — 전부 사용자 영역이고 shell profile 은 건드리지 않는다
   uv    공식 Astral standalone installer, UV_NO_MODIFY_PATH=1
-  Bun   공식 설치기로 정확히 v1.3.14 를 $BUN_INSTALL(기본 ~/.bun) 에
-  qmd   bun install -g @tobilu/qmd
+  Bun   공식 설치기로 정확히 v1.3.14 를 $BUN_INSTALL(기본 ~/.bun) 에 — viewer(Bun 1.3.14) 용
+
+검색 색인은 별도 도구 없이 `llmwiki.py build` 가 index/search.sqlite 로 만든다.
 USAGE
 }
 
@@ -147,15 +149,16 @@ while [ $# -gt 0 ]; do
         -n | --dry-run) DRY_RUN=1 ;;
         --codex) WANT_CODEX=1 ;;
         --claude) WANT_CLAUDE=1 ;;
-        --with-qmd) WITH_QMD=1 ;;
-        --no-qmd) WITH_QMD=0 ;;
+        --with-bun) WITH_BUN=1 ;;
+        --no-bun) WITH_BUN=0 ;;
+        --with-qmd | --no-qmd) LEGACY_QMD_FLAG=1 ;;
         --no-bootstrap) BOOTSTRAP=0 ;;
         --no-mcp) WITH_MCP=0 ;;
         --no-guides) WITH_GUIDES=0 ;;
         --python) PYTHON_OPT=${2:?--python 에 경로가 필요하다}; shift ;;
         --python=*) PYTHON_OPT=${1#--python=} ;;
         --mcp-name) MCP_NAME=${2:?--mcp-name 에 이름이 필요하다}; shift ;;
-        --qmd-name) QMD_NAME=${2:?--qmd-name 에 이름이 필요하다}; shift ;;
+        --qmd-name) LEGACY_QMD_FLAG=1; : "${2:?--qmd-name 에 이름이 필요하다}"; shift ;;
         --force) FORCE=1 ;;
         --ingest-routine) ROUTINE=${2:?--ingest-routine 에 claude/codex/none 이 필요하다}; shift ;;
         --ingest-routine=*) ROUTINE=${1#--ingest-routine=} ;;
@@ -372,14 +375,9 @@ resolve_python() {
 }
 
 # ---------------------------------------------------------------------- bun
-bun_bin_dir() {
-    if [ -n "$BUN_BIN" ] && "$BUN_BIN" pm bin -g >/dev/null 2>&1; then
-        "$BUN_BIN" pm bin -g 2>/dev/null
-        return 0
-    fi
-    printf '%s' "$BUN_DIR/bin"
-}
-
+# Bun 은 viewer(viewer/package.json, Bun 1.3.14) 를 돌리는 데 쓴다. hook 이나
+# 검색 색인은 Bun 없이 돈다 — 그래서 없어도 설치를 막지 않고, --no-bun 으로
+# 아예 건너뛸 수 있다.
 resolve_bun() {
     if [ -n "$BUN_BIN" ]; then return 0; fi
     if has bun; then
@@ -425,47 +423,14 @@ bootstrap_bun() {
     BUN_SOURCE=설치함
 }
 
-# ---------------------------------------------------------------------- qmd
-resolve_qmd() {
-    if [ -n "$QMD_BIN" ]; then return 0; fi
-    if has qmd; then
-        QMD_BIN=$(command -v qmd)
-        QMD_SOURCE=기존
+install_bun() { # install 의 "도구 준비" 단계. 설정 파일을 쓰기 전에 끝난다.
+    if [ "$WITH_BUN" -eq 0 ]; then return 0; fi
+    step "도구 준비 (viewer 용 Bun $BUN_VERSION)"
+    if [ "$BOOTSTRAP" -eq 0 ] && ! resolve_bun; then
+        warn "Bun 이 없는데 --no-bootstrap 이라 받아 오지 않는다 — viewer 를 쓰려면 Bun $BUN_VERSION 을 따로 마련하라"
         return 0
-    fi
-    if [ -x "$BUN_DIR/bin/qmd" ]; then
-        QMD_BIN=$BUN_DIR/bin/qmd
-        QMD_SOURCE=기존
-        return 0
-    fi
-    return 1
-}
-
-bootstrap_qmd() {
-    if resolve_qmd; then return 0; fi
-    if [ "$ALLOW_TOOL_INSTALL" -eq 0 ]; then return 1; fi
-    if [ "$DRY_RUN" -eq 1 ]; then
-        bootstrap_bun
-        plan "bun install -g $QMD_PACKAGE"
-        return 0
-    fi
-    if [ "$BOOTSTRAP" -eq 0 ]; then
-        warn "qmd 가 없는데 --no-bootstrap 이라 받아 오지 않는다 — collection 준비를 건너뛴다"
-        return 1
     fi
     bootstrap_bun
-    say "  $QMD_PACKAGE 을(를) 설치한다 (bun install -g)"
-    "$BUN_BIN" install -g "$QMD_PACKAGE" >/dev/null 2>&1 ||
-        die "bun install -g $QMD_PACKAGE 이 실패했다"
-    _dir=$(bun_bin_dir)
-    [ -x "$_dir/qmd" ] || die "qmd 를 설치했는데 $_dir/qmd 가 없다"
-    QMD_BIN=$_dir/qmd
-    QMD_SOURCE=설치함
-    return 0
-}
-
-qmd_cmd() { # 해석된 qmd 를 부른다
-    "$QMD_BIN" "$@"
 }
 
 # `set -e` 아래에서 `cond && VAR=1` 은 cond 가 거짓일 때 스크립트를 끝낸다.
@@ -523,14 +488,9 @@ report_detection() {
         printf '  bun             %s  [%s, %s]\n' "$BUN_BIN" \
             "$("$BUN_BIN" --version 2>/dev/null | head -1)" "$BUN_SOURCE"
     else
-        printf '  bun             없음 (qmd 가 필요할 때만 받는다, v%s 고정)\n' "$BUN_VERSION"
+        printf '  bun             없음 (viewer 용, install 이 v%s 를 받는다)\n' "$BUN_VERSION"
     fi
-    if resolve_qmd; then
-        printf '  qmd             %s  [%s, %s]\n' "$QMD_BIN" \
-            "$("$QMD_BIN" --version 2>/dev/null | head -1)" "$QMD_SOURCE"
-    else
-        printf '  qmd             없음 (%s 로 설치한다)\n' "$QMD_PACKAGE"
-    fi
+    printf '  검색 색인       index/search.sqlite (llmwiki.py build 가 만든다)\n'
     if [ "$HAVE_CODEX" -eq 1 ]; then
         printf '  codex           %s\n' "$(codex --version 2>/dev/null | head -1)"
     else
@@ -777,56 +737,6 @@ uninstall_mcp() {
     fi
 }
 
-# --------------------------------------------------------------- qmd
-# qmd 는 후보 탐색용 보조 색인일 뿐이다. 남이 만든 collection 은 이름이 겹쳐도
-# 절대 지우거나 가리키는 곳을 바꾸지 않는다 — 경고하고 손을 뗀다.
-qmd_path_of() {
-    [ -n "$QMD_BIN" ] || return 0
-    "$QMD_BIN" collection show "$1" 2>/dev/null | sed -n 's/^ *Path: *//p' | head -1
-}
-
-install_qmd() {
-    if [ "$WITH_QMD" -eq 0 ]; then return 0; fi
-    step "qmd collection ($QMD_NAME)"
-    if ! bootstrap_qmd; then return 0; fi
-    if [ "$DRY_RUN" -eq 1 ] && [ -z "$QMD_BIN" ]; then
-        plan "qmd 설치 후 collection '$QMD_NAME' 준비"
-        return 0
-    fi
-    _target=$REPO_ROOT/index/markdown
-    if [ "$DRY_RUN" -eq 1 ]; then
-        plan "llmwiki.py export-md  ->  $_target"
-        _existing=$(qmd_path_of "$QMD_NAME")
-        if [ -z "$_existing" ]; then
-            plan "qmd collection add $_target --name $QMD_NAME"
-        elif [ "$_existing" = "$_target" ]; then
-            plan "qmd update -c $QMD_NAME  (이미 이 저장소를 가리킨다)"
-        else
-            plan "건너뜀 — '$QMD_NAME' 이 이미 $_existing 를 가리킨다"
-        fi
-        return 0
-    fi
-    "$PY" "$WIKI_CLI" export-md >/dev/null
-    say "  markdown 재생성 완료: $_target"
-    _existing=$(qmd_path_of "$QMD_NAME")
-    if [ -z "$_existing" ]; then
-        if qmd_cmd collection add "$_target" --name "$QMD_NAME" >/dev/null 2>&1; then
-            say "  collection 생성 완료"
-        else
-            warn "qmd collection add 실패"
-        fi
-    elif [ "$_existing" = "$_target" ]; then
-        if qmd_cmd update -c "$QMD_NAME" >/dev/null 2>&1; then
-            say "  기존 collection 재색인 완료"
-        else
-            warn "qmd update 실패"
-        fi
-    else
-        warn "'$QMD_NAME' 은 이미 $_existing 를 가리킨다 — 건드리지 않는다."
-        warn "  다른 이름을 쓰려면: --qmd-name <새이름>"
-    fi
-}
-
 # --------------------------------------------------------------- 주기 ingest 루틴
 # 루틴은 raw/ 에 새 소스가 들어왔을 때만 에이전트를 부른다. 매시간 LLM 을
 # 깨우는 것이 목적이 아니므로, 미처리 목록이 지난번과 같으면 그냥 넘어간다.
@@ -1050,10 +960,10 @@ case $COMMAND in
         report_detection
         require_targets
         # 네트워크가 필요한 일은 전부 여기서 끝낸다 — 아래부터는 설정 쓰기다.
-        if [ "$WITH_QMD" -eq 1 ]; then
-            step "도구 준비"
-            bootstrap_qmd || :
+        if [ "$LEGACY_QMD_FLAG" -eq 1 ]; then
+            warn "qmd 옵션은 더 이상 쓰지 않는다 — 검색은 llmwiki.py build 가 만드는 index/search.sqlite 다"
         fi
+        install_bun
         if [ -z "$PY" ]; then
             # dry-run 이면서 쓸 Python 이 아직 없는 경우다. 위에 계획은 다 찍었고,
             # 그 다음 계획은 Python 이 있어야 만들 수 있다.
@@ -1063,7 +973,6 @@ case $COMMAND in
         fi
         install_hooks
         install_mcp
-        install_qmd
         install_private_remote
         install_routine
         if [ "$DRY_RUN" -eq 1 ]; then
@@ -1083,11 +992,8 @@ case $COMMAND in
         uninstall_hooks
         uninstall_mcp
         uninstall_routine
-        if [ "$WITH_QMD" -eq 1 ]; then
-            step "qmd"
-            warn "collection 과 받아 온 도구(uv/Bun/qmd)는 자동으로 지우지 않는다."
-            warn "  collection 을 정말 지우려면: qmd collection remove $QMD_NAME"
-        fi
+        step "받아 온 도구"
+        warn "받아 온 도구(uv/Bun)는 자동으로 지우지 않는다 — $UV_DIR, $BUN_DIR"
         if [ "$DRY_RUN" -eq 0 ]; then
             step "남은 백업"
             for f in "$HOME/.codex/hooks.json.llmwiki-bak" \

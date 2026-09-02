@@ -84,7 +84,7 @@ class SourceLayoutTest(unittest.TestCase):
         ignored = (REPO / ".gitignore").read_text(encoding="utf-8").splitlines()
         self.assertIn("viewer/public/data/", ignored)
         self.assertIn("index/*.json", ignored)
-        self.assertIn("index/markdown/", ignored)
+        self.assertIn("index/search.sqlite*", ignored)
 
 
 class AppContractTest(unittest.TestCase):

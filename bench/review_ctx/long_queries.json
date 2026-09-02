@@ -1,0 +1,1464 @@
+{
+  "corpus_pages": 10000,
+  "queries": [
+    {
+      "id": "q00001",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.000의 현재 버전은 v2.3.1인가",
+      "gold_pages": [
+        "page:synthesis-000801"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000801:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000001,page:entity-000002에는 v2.1.3가 기록되어 있다."
+    },
+    {
+      "id": "q00002",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.001의 현재 버전은 v4.7.2인가",
+      "gold_pages": [
+        "page:synthesis-000802"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000802:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000007,page:entity-000008에는 v4.2.7가 기록되어 있다."
+    },
+    {
+      "id": "q00003",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.002의 현재 버전은 v6.1.8인가",
+      "gold_pages": [
+        "page:synthesis-000803"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000803:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000013,page:entity-000014에는 v6.8.1가 기록되어 있다."
+    },
+    {
+      "id": "q00004",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.003의 현재 버전은 v3.9.4인가",
+      "gold_pages": [
+        "page:synthesis-000804"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000804:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000019,page:entity-000020에는 v3.4.9가 기록되어 있다."
+    },
+    {
+      "id": "q00005",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.004의 현재 버전은 v2.3.1인가",
+      "gold_pages": [
+        "page:synthesis-000805"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000805:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=hard; 근접 오답 page:entity-000025,page:entity-000026,page:entity-000027,page:entity-000028,page:entity-000029,page:entity-000030에는 v2.1.3가 기록되어 있다."
+    },
+    {
+      "id": "q00006",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.005의 현재 버전은 v4.7.2인가",
+      "gold_pages": [
+        "page:synthesis-000806"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000806:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000031,page:entity-000032에는 v4.2.7가 기록되어 있다."
+    },
+    {
+      "id": "q00007",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.006의 현재 버전은 v6.1.8인가",
+      "gold_pages": [
+        "page:synthesis-000807"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000807:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000037,page:entity-000038에는 v6.8.1가 기록되어 있다."
+    },
+    {
+      "id": "q00008",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.007의 현재 버전은 v3.9.4인가",
+      "gold_pages": [
+        "page:synthesis-000808"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000808:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000043,page:entity-000044에는 v3.4.9가 기록되어 있다."
+    },
+    {
+      "id": "q00009",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.008의 현재 버전은 v2.3.1인가",
+      "gold_pages": [
+        "page:synthesis-000809"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000809:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000049,page:entity-000050에는 v2.1.3가 기록되어 있다."
+    },
+    {
+      "id": "q00010",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.009의 현재 버전은 v4.7.2인가",
+      "gold_pages": [
+        "page:synthesis-000810"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000810:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=hard; 근접 오답 page:entity-000055,page:entity-000056,page:entity-000057,page:entity-000058,page:entity-000059,page:entity-000060에는 v4.2.7가 기록되어 있다."
+    },
+    {
+      "id": "q00011",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.010의 현재 버전은 v6.1.8인가",
+      "gold_pages": [
+        "page:synthesis-000811"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000811:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000061,page:entity-000062에는 v6.8.1가 기록되어 있다."
+    },
+    {
+      "id": "q00012",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.011의 현재 버전은 v3.9.4인가",
+      "gold_pages": [
+        "page:synthesis-000812"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000812:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000067,page:entity-000068에는 v3.4.9가 기록되어 있다."
+    },
+    {
+      "id": "q00013",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.012의 현재 버전은 v2.3.1인가",
+      "gold_pages": [
+        "page:synthesis-000813"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000813:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000073,page:entity-000074에는 v2.1.3가 기록되어 있다."
+    },
+    {
+      "id": "q00014",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.013의 현재 버전은 v4.7.2인가",
+      "gold_pages": [
+        "page:synthesis-000814"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000814:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000079,page:entity-000080에는 v4.2.7가 기록되어 있다."
+    },
+    {
+      "id": "q00015",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.014의 현재 버전은 v6.1.8인가",
+      "gold_pages": [
+        "page:synthesis-000815"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000815:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=hard; 근접 오답 page:entity-000085,page:entity-000086,page:entity-000087,page:entity-000088,page:entity-000089,page:entity-000090에는 v6.8.1가 기록되어 있다."
+    },
+    {
+      "id": "q00016",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.015의 현재 버전은 v3.9.4인가",
+      "gold_pages": [
+        "page:synthesis-000816"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000816:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000091,page:entity-000092에는 v3.4.9가 기록되어 있다."
+    },
+    {
+      "id": "q00017",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.016의 현재 버전은 v2.3.1인가",
+      "gold_pages": [
+        "page:synthesis-000817"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000817:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000097,page:entity-000098에는 v2.1.3가 기록되어 있다."
+    },
+    {
+      "id": "q00018",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.017의 현재 버전은 v4.7.2인가",
+      "gold_pages": [
+        "page:synthesis-000818"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000818:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000103,page:entity-000104에는 v4.2.7가 기록되어 있다."
+    },
+    {
+      "id": "q00019",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.018의 현재 버전은 v6.1.8인가",
+      "gold_pages": [
+        "page:synthesis-000819"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000819:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; 근접 오답 page:entity-000109,page:entity-000110에는 v6.8.1가 기록되어 있다."
+    },
+    {
+      "id": "q00020",
+      "type": "exact",
+      "lang": "ko",
+      "text": "오로라 배포군 설정 키 cfg.pipeline.019의 현재 버전은 v3.9.4인가",
+      "gold_pages": [
+        "page:synthesis-000820"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000820:exact"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=hard; 근접 오답 page:entity-000115,page:entity-000116,page:entity-000117,page:entity-000118,page:entity-000119,page:entity-000120에는 v3.4.9가 기록되어 있다."
+    },
+    {
+      "id": "q00101",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aalo-astra 서비스와 aapk-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000901"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000901:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=false; page:entity-000601,page:entity-000602는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00102",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aalp-astra 서비스와 aapl-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000902"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000902:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=true; page:entity-000607,page:entity-000608는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00103",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aalq-astra 서비스와 aapm-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000903"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000903:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=hard; block-hidden=false; page:entity-000613,page:entity-000614,page:entity-000615,page:entity-000616,page:entity-000617,page:entity-000618는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00104",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aalr-astra 서비스와 aapn-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000904"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000904:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=false; page:entity-000619,page:entity-000620는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00105",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aals-astra 서비스와 aapo-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000905"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000905:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=true; page:entity-000625,page:entity-000626는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00106",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aalt-astra 서비스와 aapp-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000906"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000906:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=hard; block-hidden=false; page:entity-000631,page:entity-000632,page:entity-000633,page:entity-000634,page:entity-000635,page:entity-000636는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00107",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aalu-astra 서비스와 aapq-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000907"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000907:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=false; page:entity-000637,page:entity-000638는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00108",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aalv-astra 서비스와 aapr-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000908"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000908:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=true; page:entity-000643,page:entity-000644는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00109",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aalw-astra 서비스와 aaps-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000909"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000909:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=hard; block-hidden=false; page:entity-000649,page:entity-000650,page:entity-000651,page:entity-000652,page:entity-000653,page:entity-000654는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00110",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aalx-astra 서비스와 aapt-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000910"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000910:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=false; page:entity-000655,page:entity-000656는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00111",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aaly-astra 서비스와 aapu-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000911"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000911:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=true; page:entity-000661,page:entity-000662는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00112",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aalz-astra 서비스와 aapv-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000912"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000912:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=hard; block-hidden=false; page:entity-000667,page:entity-000668,page:entity-000669,page:entity-000670,page:entity-000671,page:entity-000672는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00113",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aama-astra 서비스와 aapw-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000913"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000913:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=false; page:entity-000673,page:entity-000674는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00114",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aamb-astra 서비스와 aapx-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000914"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000914:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=true; page:entity-000679,page:entity-000680는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00115",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aamc-astra 서비스와 aapy-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000915"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000915:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=hard; block-hidden=false; page:entity-000685,page:entity-000686,page:entity-000687,page:entity-000688,page:entity-000689,page:entity-000690는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00116",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aamd-astra 서비스와 aapz-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000916"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000916:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=false; page:entity-000691,page:entity-000692는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00117",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aame-astra 서비스와 aaqa-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000917"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000917:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=true; page:entity-000697,page:entity-000698는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00118",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aamf-astra 서비스와 aaqb-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000918"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000918:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=hard; block-hidden=false; page:entity-000703,page:entity-000704,page:entity-000705,page:entity-000706,page:entity-000707,page:entity-000708는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00119",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aamg-astra 서비스와 aaqc-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000919"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000919:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=false; page:entity-000709,page:entity-000710는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00120",
+      "type": "relation",
+      "lang": "ko",
+      "text": "aamh-astra 서비스와 aaqd-boreal 저장소는 어떤 관계인가",
+      "gold_pages": [
+        "page:synthesis-000920"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000920:relation"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=easy; block-hidden=true; page:entity-000715,page:entity-000716는 두 이름만 언급한다."
+    },
+    {
+      "id": "q00201",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaaa-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000002"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000002:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000001"
+      ],
+      "notes": "난이도=strong; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00202",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaab-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000005"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000005:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000003",
+        "page:synthesis-000004"
+      ],
+      "notes": "난이도=weak; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00203",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaac-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000009"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000009:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000006",
+        "page:synthesis-000007",
+        "page:synthesis-000008"
+      ],
+      "notes": "난이도=strong; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00204",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaad-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000011"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000011:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000010"
+      ],
+      "notes": "난이도=current; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00205",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaae-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000014"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000014:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000012",
+        "page:synthesis-000013"
+      ],
+      "notes": "난이도=strong; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00206",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaaf-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000018"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000018:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000015",
+        "page:synthesis-000016",
+        "page:synthesis-000017"
+      ],
+      "notes": "난이도=weak; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00207",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaag-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000020"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000020:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000019"
+      ],
+      "notes": "난이도=strong; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00208",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaah-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000023"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000023:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000021",
+        "page:synthesis-000022"
+      ],
+      "notes": "난이도=weak; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00209",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaai-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000027"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000027:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000024",
+        "page:synthesis-000025",
+        "page:synthesis-000026"
+      ],
+      "notes": "난이도=strong; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00210",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaaj-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000029"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000029:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000028"
+      ],
+      "notes": "난이도=current; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00211",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaak-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000032"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000032:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000030",
+        "page:synthesis-000031"
+      ],
+      "notes": "난이도=strong; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00212",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaal-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000036"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000036:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000033",
+        "page:synthesis-000034",
+        "page:synthesis-000035"
+      ],
+      "notes": "난이도=strong; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00213",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaam-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000038"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000038:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000037"
+      ],
+      "notes": "난이도=weak; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00214",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaan-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000041"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000041:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000039",
+        "page:synthesis-000040"
+      ],
+      "notes": "난이도=strong; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00215",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaao-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000045"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000045:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000042",
+        "page:synthesis-000043",
+        "page:synthesis-000044"
+      ],
+      "notes": "난이도=current; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00216",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaap-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000047"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000047:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000046"
+      ],
+      "notes": "난이도=strong; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00217",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaaq-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000050"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000050:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000048",
+        "page:synthesis-000049"
+      ],
+      "notes": "난이도=weak; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00218",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaar-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000054"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000054:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000051",
+        "page:synthesis-000052",
+        "page:synthesis-000053"
+      ],
+      "notes": "난이도=strong; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00219",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaas-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000056"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000056:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000055"
+      ],
+      "notes": "난이도=weak; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00220",
+      "type": "temporal",
+      "lang": "ko",
+      "text": "aaat-legacy 운용 상태는 지금 무엇인가",
+      "gold_pages": [
+        "page:synthesis-000059"
+      ],
+      "gold_blocks": [
+        "block:synthesis-000059:temporal"
+      ],
+      "stale_pages": [
+        "page:synthesis-000057",
+        "page:synthesis-000058"
+      ],
+      "notes": "난이도=strong; supersedes 체인의 최신 page가 정답이다."
+    },
+    {
+      "id": "q00301",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "푸른 등대 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000001"
+      ],
+      "gold_blocks": [
+        "block:source-000001:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; 한국어 쌍 page:source-002001와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00302",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aaht-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000002"
+      ],
+      "gold_blocks": [
+        "block:source-000002:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-easy; 한국어 쌍 page:source-002002와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00303",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aahu-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000003"
+      ],
+      "gold_blocks": [
+        "block:source-000003:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; 한국어 쌍 page:source-002003와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00304",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "푸른 정원 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000004"
+      ],
+      "gold_blocks": [
+        "block:source-000004:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; 한국어 쌍 page:source-002004와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00305",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aahw-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000005"
+      ],
+      "gold_blocks": [
+        "block:source-000005:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; 한국어 쌍 page:source-002005와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00306",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aahx-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000006"
+      ],
+      "gold_blocks": [
+        "block:source-000006:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; 한국어 쌍 page:source-002006와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00307",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "푸른 관측소 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000007"
+      ],
+      "gold_blocks": [
+        "block:source-000007:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; 한국어 쌍 page:source-002007와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00308",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aahz-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000008"
+      ],
+      "gold_blocks": [
+        "block:source-000008:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-easy; 한국어 쌍 page:source-002008와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00309",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aaia-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000009"
+      ],
+      "gold_blocks": [
+        "block:source-000009:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; 한국어 쌍 page:source-002009와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00310",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "푸른 돛대 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000010"
+      ],
+      "gold_blocks": [
+        "block:source-000010:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; 한국어 쌍 page:source-002010와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00311",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "고요한 등대 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000011"
+      ],
+      "gold_blocks": [
+        "block:source-000011:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; 한국어 쌍 page:source-002011와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00312",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aaid-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000012"
+      ],
+      "gold_blocks": [
+        "block:source-000012:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-easy; 한국어 쌍 page:source-002012와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00313",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aaie-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000013"
+      ],
+      "gold_blocks": [
+        "block:source-000013:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; 한국어 쌍 page:source-002013와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00314",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "고요한 정원 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000014"
+      ],
+      "gold_blocks": [
+        "block:source-000014:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; 한국어 쌍 page:source-002014와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00315",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aaig-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000015"
+      ],
+      "gold_blocks": [
+        "block:source-000015:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; 한국어 쌍 page:source-002015와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00316",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aaih-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000016"
+      ],
+      "gold_blocks": [
+        "block:source-000016:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; 한국어 쌍 page:source-002016와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00317",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "고요한 관측소 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000017"
+      ],
+      "gold_blocks": [
+        "block:source-000017:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; 한국어 쌍 page:source-002017와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00318",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aaij-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000018"
+      ],
+      "gold_blocks": [
+        "block:source-000018:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-easy; 한국어 쌍 page:source-002018와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00319",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "aaik-atlas 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000019"
+      ],
+      "gold_blocks": [
+        "block:source-000019:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; 한국어 쌍 page:source-002019와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00320",
+      "type": "crosslingual",
+      "lang": "ko",
+      "text": "고요한 돛대 복구 규칙은 무엇인가",
+      "gold_pages": [
+        "page:source-000020"
+      ],
+      "gold_blocks": [
+        "block:source-000020:crosslingual"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; 한국어 쌍 page:source-002020와 related인 영어 source가 정답이다."
+    },
+    {
+      "id": "q00401",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatg-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001001"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001001:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; distractors=page:entity-001201,page:entity-001202."
+    },
+    {
+      "id": "q00402",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aath-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001002"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001002:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-easy; distractors=page:entity-001207,page:entity-001208."
+    },
+    {
+      "id": "q00403",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aati-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001003"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001003:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; distractors=page:entity-001213,page:entity-001214,page:entity-001215,page:entity-001216,page:entity-001217,page:entity-001218."
+    },
+    {
+      "id": "q00404",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatj-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001004"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001004:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; distractors=page:entity-001219,page:entity-001220."
+    },
+    {
+      "id": "q00405",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatk-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001005"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001005:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; distractors=page:entity-001225,page:entity-001226,page:entity-001227,page:entity-001228,page:entity-001229,page:entity-001230."
+    },
+    {
+      "id": "q00406",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatl-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001006"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001006:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; distractors=page:entity-001231,page:entity-001232,page:entity-001233,page:entity-001234,page:entity-001235,page:entity-001236."
+    },
+    {
+      "id": "q00407",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatm-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001007"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001007:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; distractors=page:entity-001237,page:entity-001238."
+    },
+    {
+      "id": "q00408",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatn-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001008"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001008:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-easy; distractors=page:entity-001243,page:entity-001244."
+    },
+    {
+      "id": "q00409",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aato-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001009"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001009:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; distractors=page:entity-001249,page:entity-001250,page:entity-001251,page:entity-001252,page:entity-001253,page:entity-001254."
+    },
+    {
+      "id": "q00410",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatp-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001010"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001010:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; distractors=page:entity-001255,page:entity-001256."
+    },
+    {
+      "id": "q00411",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatq-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001011"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001011:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; distractors=page:entity-001261,page:entity-001262."
+    },
+    {
+      "id": "q00412",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatr-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001012"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001012:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-easy; distractors=page:entity-001267,page:entity-001268."
+    },
+    {
+      "id": "q00413",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aats-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001013"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001013:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; distractors=page:entity-001273,page:entity-001274,page:entity-001275,page:entity-001276,page:entity-001277,page:entity-001278."
+    },
+    {
+      "id": "q00414",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatt-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001014"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001014:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; distractors=page:entity-001279,page:entity-001280."
+    },
+    {
+      "id": "q00415",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatu-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001015"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001015:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; distractors=page:entity-001285,page:entity-001286,page:entity-001287,page:entity-001288,page:entity-001289,page:entity-001290."
+    },
+    {
+      "id": "q00416",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatv-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001016"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001016:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; distractors=page:entity-001291,page:entity-001292,page:entity-001293,page:entity-001294,page:entity-001295,page:entity-001296."
+    },
+    {
+      "id": "q00417",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatw-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001017"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001017:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; distractors=page:entity-001297,page:entity-001298."
+    },
+    {
+      "id": "q00418",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatx-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001018"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001018:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-easy; distractors=page:entity-001303,page:entity-001304."
+    },
+    {
+      "id": "q00419",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aaty-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001019"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001019:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=partial-hard; distractors=page:entity-001309,page:entity-001310,page:entity-001311,page:entity-001312,page:entity-001313,page:entity-001314."
+    },
+    {
+      "id": "q00420",
+      "type": "paraphrase",
+      "lang": "ko",
+      "text": "aatz-nimbus 서비스 — 검수 생략 배포 승인 요건은 무엇인가",
+      "gold_pages": [
+        "page:synthesis-001020"
+      ],
+      "gold_blocks": [
+        "block:synthesis-001020:paraphrase"
+      ],
+      "stale_pages": [],
+      "notes": "난이도=zero; distractors=page:entity-001315,page:entity-001316."
+    }
+  ]
+}

@@ -20,7 +20,7 @@ function liveWikiData(): Plugin {
       const wikiRoot = resolve(projectRoot, "wiki");
       server.watcher.add(wikiRoot);
       server.watcher.on("all", (_event, path) => {
-        if (path.startsWith(wikiRoot) && path.endsWith(".json")) schedule();
+        if (path.startsWith(wikiRoot) && path.endsWith(".json")) schedule(path);
       });
       build();
     },

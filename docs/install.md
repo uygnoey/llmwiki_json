@@ -56,7 +56,8 @@ hook 이 프롬프트를 막는 일은 없다.
 **검증 범위**: PowerShell 7.6.5 에서 구문·인자 처리·dry-run 까지 확인했다.
 실제 Windows 기계의 Codex/Claude Code 를 상대로는 아직 돌려 보지 않았다.
 
-**의존성**: 셸과 `curl` 또는 `wget` 뿐이다. Python 과 qmd 는 없으면 받아 온다.
+**의존성**: 셸과 `curl` 또는 `wget` 뿐이다. Python 과 viewer 용 Bun 은 없으면 받아 온다.
+검색 색인은 `llmwiki.py build` 가 표준 라이브러리만으로 만든다.
 `codex` / `claude` 는 있는 것만 대상으로 잡는다.
 
 ## 없는 도구는 받아 온다
@@ -68,17 +69,22 @@ profile 도 건드리지 않고, 받은 절대경로를 그 자리에서 쓴다.
 |---|---|---|---|
 | Python 3.9+ | uv 를 받아 `uv python install` | uv 관리 디렉터리 | 공식 Astral standalone installer |
 | Bun | 정확히 **v1.3.14** | `$BUN_INSTALL` (기본 `~/.bun`) | 공식 Bun 설치기 |
-| qmd | `bun install -g @tobilu/qmd` | Bun 전역 bin | 공식 npm 패키지 |
 
-저장소 규칙상 package manager 는 Bun 하나뿐이라 npm·yarn·pnpm 은 쓰지 않는다.
+Bun 은 `viewer/` 를 돌리는 package manager 다 — 저장소 규칙상 package manager 는 Bun
+하나뿐이라 npm·yarn·pnpm 은 쓰지 않는다. hook 과 검색 색인은 Bun 없이 돌기 때문에
+viewer 를 쓰지 않는다면 `--no-bun` 으로 이 단계만 건너뛸 수 있다.
+
+qmd 는 더 이상 받지 않는다 — 검색은 `llmwiki.py build` 가 굽는 `index/search.sqlite`
+가 한다. 옛 옵션 `--no-qmd` · `--with-qmd` · `--qmd-name` 은 받아들이되 경고만 내고 무시한다.
 
 **profile 을 건드리지 않는 법.** uv 설치기에는 `UV_NO_MODIFY_PATH=1` 과 옛 이름
 `INSTALLER_NO_MODIFY_PATH=1` 을 함께 준다. Bun 설치기에는 그런 스위치가 없고
 `case $(basename "$SHELL")` 로 고칠 profile 을 고르므로, `SHELL=/bin/sh` 로 불러
 그 분기를 타지 않게 한다 — 설치기는 PATH 안내만 출력하고 파일은 그대로 둔다.
 
-**이미 있는 것은 절대 갈아치우지 않는다.** Bun 이 1.3.14 가 아니어도 경고만 하고
-그대로 쓴다. 남의 설치를 뒤엎는 쪽이 버전이 어긋나는 것보다 나쁘다.
+**이미 있는 것은 절대 갈아치우지 않는다.** 이미 있는 uv·Python 은 그대로 쓰고, Bun 이
+1.3.14 가 아니어도 경고만 하고 그대로 쓴다. 남의 설치를 뒤엎는 쪽이 버전이 어긋나는
+것보다 나쁘다.
 
 ### 인터프리터 선택 순서
 
@@ -107,9 +113,9 @@ viewer 는 이 설치와 별개로 돌기 때문에 자기 순서를 따로 가�
 ./scripts/install.sh --no-bootstrap   # 네트워크 설치 전면 금지
 ```
 
-Python 이 없으면 명확한 오류로 멈추고(설정은 한 글자도 건드리지 않는다), qmd 가
-없으면 경고하고 qmd 관련 작업만 건너뛴다. `--dry-run` 은 네트워크조차 타지 않고
-무엇을 받을지 계획만 출력한다 — 설정 파일도, 받아 올 도구도, `index/markdown` 도
+Python 이 없으면 명확한 오류로 멈추고(설정은 한 글자도 건드리지 않는다), Bun 이
+없으면 경고하고 Bun 단계만 건너뛴다 — hook 은 그대로 설치된다. `--dry-run` 은
+네트워크조차 타지 않고 무엇을 받을지 계획만 출력한다 — 설정 파일도, 받아 올 도구도
 만들지 않는다. (다만 이미 설치된 `uv`·`bun` 에게 버전을 물어보기는 하므로, 그
 도구들이 제 캐시 디렉터리를 만드는 것까지 막지는 않는다. 우리가 쓰는 것은 없다.)
 
@@ -140,13 +146,14 @@ scripts/install.sh [install|verify|uninstall|doctor|update] [옵션]
 |---|---|
 | `-n`, `--dry-run` | 바뀔 내용만 보여주고 **아무것도 쓰지 않는다** |
 | `--codex` / `--claude` | 한쪽만 대상으로 한다 (기본: 설치된 것 자동 감지) |
-| `--no-qmd` | qmd 설치와 collection 준비를 건너뛴다 (기본은 준비한다) |
-| `--with-qmd` | 기본값. 옛 이름을 남겨 둔 것뿐이다 |
+| `--no-bun` | viewer 용 Bun 부트스트랩을 건너뛴다 (기본은 준비한다) |
+| `--with-bun` | 기본값. Bun 1.3.14 를 준비한다 |
+| `--no-qmd` / `--with-qmd` / `--qmd-name N` | 옛 옵션. 받아들이되 경고만 내고 무시한다 (qmd 는 더 이상 쓰지 않는다) |
 | `--no-bootstrap` | 없는 도구를 받아 오지 않는다 |
 | `--no-mcp` | MCP 서버 등록을 건너뛴다 |
 | `--no-guides` | `~/.codex/AGENTS.md`, `~/.claude/CLAUDE.md` 를 건드리지 않는다 |
 | `--python P` | 쓸 인터프리터 절대경로. 자동 선택보다 우선하고, 공백이 있어도 된다 |
-| `--mcp-name N` / `--qmd-name N` | 이름 바꾸기 (기본 `llmwiki` / `llmwiki_json`) |
+| `--mcp-name N` | MCP 서버 이름 (기본 `llmwiki`) |
 | `--force` | 미지원 OS 나 미감지 클라이언트에서도 강행한다 |
 | `-q`, `--quiet` | 진행 로그를 줄인다 (클라이언트 실행 파일도 부르지 않는다) |
 | `--ingest-routine C` | 주기 루틴을 걸 에이전트 — `claude` · `codex` · `none`. 주지 않으면 설치 중에 물어본다 |
@@ -194,16 +201,13 @@ scripts/install.sh [install|verify|uninstall|doctor|update] [옵션]
 | `~/.claude/settings.json` | 같음. `theme` · `permissions` 등 hook 밖 설정은 손대지 않는다 |
 | `~/.codex/AGENTS.md`, `~/.claude/CLAUDE.md` | `<!-- llmwiki-context:start -->` … `end` 사이 섹션만 추가. 기존 본문은 그대로 |
 | MCP 등록 | `claude mcp add --scope user` / `codex mcp add`. 같은 이름이 이미 있으면 **그대로 둔다**. 우리가 실제로 등록한 것만 `$HOME/.llmwiki/installed-mcp` 에 기록한다 |
-| qmd collection | 기본으로 준비한다. 없으면 만들고, 우리 `index/markdown` 을 가리키고 있으면 재색인 |
 | OS 스케줄러 | `--ingest-routine` 을 고른 경우에만. launchd `com.llmwiki.ingest` · cron `# llmwiki-routine` 줄 · schtasks 작업 하나. 우리가 등록한 기록이 있을 때만 지운다 |
 | git remote | `--private-remote`/`--gh-create` 를 준 경우에만 remote 하나 **추가**. `origin` 과 기존 remote 는 그대로 |
 
 절대 건드리지 않는 것:
 
 - `wiki/**/*.json` 정본과 `raw/` — 읽기만 한다.
-- `index/markdown/` 은 정식 `llmwiki.py export-md` 로만 다시 만든다 (`--no-qmd` 면 아예 만들지 않는다).
-- **남의 qmd collection.** 이름이 겹치는 collection 이 다른 경로를 가리키면 경고만
-  하고 손을 뗀다. `uninstall` 도 collection 을 지우지 않고 지우는 방법만 알려준다.
+- `index/` 의 파생물(검색 색인 포함)은 정식 `llmwiki.py build` 로만 만든다. 설치기는 만들지 않는다.
 - 이미 등록된 같은 이름의 MCP 서버.
 
 ## 백업과 롤백
@@ -216,7 +220,8 @@ scripts/install.sh [install|verify|uninstall|doctor|update] [옵션]
 ```
 
 `uninstall` 은 우리 hook 그룹과 지침 섹션만 빼고, 우리가 만든 빈 파일은 지운다.
-설치 이후에 사용자가 직접 넣은 다른 설정은 그대로 살아남는다.
+설치 이후에 사용자가 직접 넣은 다른 설정은 그대로 살아남는다. 받아 온 도구
+(uv·Bun)도 지우지 않고 어디에 있는지만 알려 준다 — 다른 프로젝트가 쓰고 있을 수 있다.
 
 ### MCP 는 우리가 만든 것만 지운다
 
@@ -298,7 +303,9 @@ ok   codex.trust: trusted
 ok   claude.hook: <HOME>/.claude/settings.json (group 1)
 ok   claude.hook-current: installed command matches this checkout
 ok   claude.guide: <HOME>/.claude/CLAUDE.md
-ok   probe-injects: query='…'
+ok   probe-query: query='…' expect=page:…
+ok   probe-search: mode=index hits=5 expected_hit=True top=page:…
+ok   probe-injects: mode=index reason=index bytes=… expected_page=True block_lines=True
 ok   probe-silent-on-noise: 무관 질문에는 주입하지 않는다
 ok   fail-open: malformed stdin 은 조용히 통과한다
 모든 점검 통과
@@ -315,7 +322,7 @@ ok   fail-open: malformed stdin 은 조용히 통과한다
   python          <...>/cpython-3.12-.../bin/python3.12  [3.12.13, uv-관리]
   uv              /opt/homebrew/bin/uv  [uv 0.12.5, 기존]
   bun             /opt/homebrew/bin/bun  [1.3.14, 기존]
-  qmd             <HOME>/.bun/bin/qmd  [qmd 2.8.3, 기존]
+  검색 색인       index/search.sqlite (llmwiki.py build 가 만든다)
 ```
 
 출처는 `--python`(사용자 지정) · `uv-관리`(이미 있던 uv Python) · `시스템` ·
@@ -325,8 +332,13 @@ ok   fail-open: malformed stdin 은 조용히 통과한다
 
 - `hook-current` — 설치된 명령이 **지금 이 checkout** 을 가리키는가. clone 을 옮기면
   `stale command` 로 뜨고, 다시 `install` 하면 된다.
-- `probe-injects` — 정본에서 뽑은 실제 page 제목으로 hook 을 끝까지 돌려 본다.
-  저장소 내용을 하드코딩하지 않으므로 어떤 clone 에서도 같은 검사가 돈다.
+- `probe-query` — 정본의 **본문 block**(paragraph/list/table, 40자 이상) 중 가장 긴 것에서
+  드문 내용어 6개를 질문으로 뽑는다. 제목·heading 은 근거(B)에서 제외되므로 제목으로 물으면
+  본문 없는 hit 만 나와 헛되이 실패한다. supersedes 로 대체된 page 는 제외한다. 저장소 내용을
+  하드코딩하지 않으므로 어떤 clone 에서도 같은 검사가 돈다.
+- `probe-search` — 그 질문으로 `search` 가 page 를 찾는가 (`mode`, 기대 page 포함 여부).
+- `probe-injects` — 같은 질문으로 hook 을 끝까지 돌려 `B` 본문 줄까지 주입되는가.
+  두 검사를 나눴으므로 검색 단계와 렌더 단계 중 어디가 실패했는지 바로 보인다.
 - `probe-silent-on-noise` — 무관한 질문에 주입하지 않는지.
 - `fail-open` — 깨진 stdin 에도 조용히 통과하는지(질문을 막지 않는지).
 
@@ -344,8 +356,7 @@ clone 경로 독립성 · symlink 를 통한 실행 · dry-run 무부작용 · �
 지침 본문 보존 · 백업이 설치 이전을 가리키는지 · 3회 설치 멱등성 · clone 이동 뒤
 재설치 · uninstall 의 의미 동등 복원 · 우리가 만든 파일만 삭제 · 클라이언트 개별
 선택 · `--no-guides` · 미지원 OS 거부와 `--force` · 알 수 없는 인자 exit 2 ·
-qmd 미설치 시 경고만 · 남의 collection 불가침 · uninstall 이 collection 을 지우지
-않음 · verify 의 stale 감지 · Codex 신뢰 상태 판독과 명령 변경 시 신뢰 무효화.
+옛 qmd 옵션의 경고·무시 · verify 의 stale 감지 · Codex 신뢰 상태 판독과 명령 변경 시 신뢰 무효화.
 
 MCP 소유권은 `mcp add|get|remove` 만 흉내 내는 가짜 `claude`/`codex` CLI 로 검증한다 —
 등록·소유 기록, 남의 서버 불가침(설치·제거 양쪽), 설치 후 교체된 서버 보존, clone 이동
@@ -354,13 +365,14 @@ MCP 소유권은 `mcp add|get|remove` 만 흉내 내는 가짜 `claude`/`codex` 
 `--python` 공백 경로는 install/verify/uninstall/doctor 네 경로 모두와, 생성된 hook
 명령을 실제로 `/bin/sh` 로 실행해 주입까지 되는지로 검증한다.
 
-부트스트랩은 가짜 `curl`/`wget`/`uv`/`bun`/`qmd` 로 **네트워크 없이** 검증한다.
+부트스트랩은 가짜 `curl`/`wget`/`uv`/`bun` 으로 **네트워크 없이** 검증한다.
 안전장치로 모든 테스트가 가짜 `curl`/`wget` 을 PATH 에 깔고 시작하므로, 어떤
 테스트도 실수로 진짜 네트워크를 탈 수 없다. 다루는 것: uv·Python 받아오기,
 `UV_NO_MODIFY_PATH` 전달, Bun v1.3.14 고정과 `SHELL=/bin/sh` 로 profile 미변경,
-`bun install -g @tobilu/qmd`, 설치 후 collection 준비, 이미 있는 uv Python 우선,
+이미 있는 Bun 은 버전이 달라도 경고만, `--no-bun`, Bun 없이 `--no-bootstrap` 이면
+경고만 하고 hook 은 설치, doctor/verify 는 Bun 을 받지 않음, 이미 있는 uv Python 우선,
 시스템 Python 대체, `--python` 최우선, 잘못된 `--python` 거부, `--no-bootstrap`,
-다운로드·설치기·`uv python install`·`bun install -g` 각각의 실패가 설정을 건드리기
+다운로드·설치기·`uv python install`·Bun 설치기 각각의 실패가 설정을 건드리기
 전에 멈추는지, curl 없을 때 wget 대체, dry-run 무네트워크·무디스크, 재실행 멱등성,
 공백 든 `$HOME` 에서의 전체 경로, doctor/verify 의 출처·버전 표시.
 

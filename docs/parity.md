@@ -33,7 +33,12 @@ python3 -m unittest tests.test_parity    # 위 셋을 시험으로 고정
 쓰지 않는다 — 그래야 "같은 답"이 우연이 아님을 알 수 있다.
 
 `build` 는 정본만 복사한 임시 저장소에서 돈다. 공식 `index/` 와
-`viewer/public/data/` 는 절대 건드리지 않는다. 나중에 TS build 가 생기면
+`viewer/public/data/` 는 절대 건드리지 않는다. 두 번의 cold build 를 대조한 뒤,
+세 번째로 cold build → page 하나 편집 → `build --changed` 증분 → 같은 정본의
+cold build 를 돌려 증분 발행본(`index/search.sqlite` 포함)의 바이트가 cold 와 같은지
+본다. 바이트가 다르면 `llmwiki_index.logical_digest`(표 내용의 PK 순 지문) 까지 같은지
+따로 적어 원인이 sqlite 파일 배치인지 내용인지 가른다. `index/search.work.*`(증분
+작업 DB 와 상태 파일) 는 발행물이 아니라 지문에서 뺀다. 나중에 TS build 가 생기면
 `--candidate 'bun tools/parity/build.ts'` 로 그대로 꽂으면 되고, 파일 목록·경로·
 내용 sha256 을 전부 대조한다.
 

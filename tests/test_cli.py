@@ -80,6 +80,17 @@ class CliTest(WorkspaceCase):
         self.assertEqual(rows[0]["id"], "page:alpha")
         self.assertGreater(rows[0]["score"], rows[-1]["score"])
 
+    def test_query_works_without_a_built_index_and_with_a_stale_one(self) -> None:
+        # 색인이 없으면 정본에서 메모리 색인을 만든다.
+        rows = [json.loads(line) for line in self.cli("query", "상세 내용").stdout.splitlines()]
+        self.assertEqual(rows[0]["id"], "page:alpha")
+        # 색인을 만든 뒤 정본이 바뀌면 낡은 색인이 아니라 정본으로 답한다.
+        self.cli("build")
+        self.write_pages([make_page("gamma", "# Gamma\n\n새로 들어온 감마 문서 [[alpha]].\n",
+                                    projects=["beta"])], name="gamma.json")
+        rows = [json.loads(line) for line in self.cli("query", "감마 문서").stdout.splitlines()]
+        self.assertEqual(rows[0]["id"], "page:gamma")
+
     def test_query_respects_limit(self) -> None:
         self.assertEqual(len(self.cli("query", "문단 값", "--limit", "1").stdout.splitlines()), 1)
 
@@ -98,10 +109,15 @@ class CliTest(WorkspaceCase):
         source = self.write_raw("leak.md", "# Leak\n\npassword: hunter2\n")
         self.assertIn("보안정보", self.cli("ingest", str(source), expect=2).stderr)
 
-    def test_export_md_writes_a_qmd_ready_tree(self) -> None:
-        result = json.loads(self.cli("export-md").stdout)
-        self.assertEqual(result["pages"], 2)
-        self.assertTrue((self.root / "index" / "markdown" / "alpha.md").exists())
+    def test_build_writes_the_search_index_and_records_its_digest(self) -> None:
+        self.cli("build")
+        self.assertTrue((self.root / "index" / "search.sqlite").exists())
+        revision = self.read_json("index/revision.json")
+        self.assertEqual(len(revision["search_root"]), 64)
+        self.assertEqual(len(revision["revision"]), 64)
+
+    def test_export_md_is_gone(self) -> None:
+        self.cli("export-md", expect=2)
 
     def test_log_append_and_show(self) -> None:
         self.cli("log", "--action", "query", "--note", "tier 정의")

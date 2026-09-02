@@ -35,43 +35,75 @@ export interface WikiDataOptions {
   debounceMs?: number;
 }
 
-/** build 를 직렬로 돌린다. 실행 중에 또 요청이 오면 끝난 뒤 한 번만 더 돌린다. */
+/** build 를 직렬로 돌린다. 실행 중에 또 요청이 오면 끝난 뒤 한 번만 더 돌린다.
+ *
+ * 바뀐 파일 경로를 알면 `build --changed <경로…>` 로 넘겨 색인의 그 page 행만 갈아 끼우게 한다
+ * (debounce 동안 모인 경로는 중복을 빼고 한 번에 넘긴다). 경로는 힌트일 뿐이라 build 쪽이
+ * mtime 스캔으로 힌트 밖의 변경을 잡으면 스스로 전량으로 떨어지고, 증분 build 가 실패하면
+ * 여기서 인자 없는 build 로 한 번 더 시도한다. 경로 없이 부르면 처음부터 전량이다. */
 export function createWikiData({projectRoot, onBuilt, debounceMs = 250}: WikiDataOptions) {
   let building = false;
   let pending = false;
+  let pendingFull = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const queued = new Set<string>();
 
-  const build = () => {
-    if (building) { pending = true; return; }
+  const run = (changed: string[] | undefined, done: (ok: boolean) => void) => {
     const python = resolvePython();
     if (!python) {
       console.error("[llmwiki] Python 3.9+ 를 찾지 못해 파생물을 만들지 못했다 — "
         + "LLMWIKI_PYTHON 에 실행 파일 경로를 주거나 scripts/install.sh 로 마련한다");
+      done(false);
       return;
     }
-    building = true;
-    const child = spawn(python, ["scripts/llmwiki.py", "build"], {cwd: projectRoot, stdio: "inherit"});
-    const done = (ok: boolean) => {
-      building = false;
-      if (ok) onBuilt?.();
-      if (pending) { pending = false; build(); }
-    };
+    const args = buildArgs(changed);
+    const child = spawn(python, args, {cwd: projectRoot, stdio: "inherit"});
     child.on("error", (error) => {
       console.error(`[llmwiki] ${python} 실행 실패 — ${error.message}`);
       done(false);
     });
     child.on("close", (code) => {
-      if (code !== 0) console.error(`[llmwiki] build 실패 (exit ${code})`);
+      if (code !== 0) console.error(`[llmwiki] build 실패 (exit ${code})${changed ? " — 인자 없이 다시 시도한다" : ""}`);
       done(code === 0);
     });
   };
 
-  const schedule = () => {
+  /** 경로를 주면 증분, 안 주면 전량. 실행 중이면 경로를 모아 두었다가 끝난 뒤 한 번 더 돈다. */
+  const build = (changed?: string[]) => {
+    if (changed) for (const path of changed) queued.add(path);
+    else pendingFull = true;
+    if (building) { pending = true; return; }
+    const paths = pendingFull ? undefined : [...queued].sort();
+    queued.clear();
+    pendingFull = false;
+    building = true;
+    const finish = (ok: boolean) => {
+      building = false;
+      if (ok) onBuilt?.();
+      if (pending) { pending = false; build(); }
+    };
+    run(paths, (ok) => {
+      if (ok || !paths) { finish(ok); return; }
+      run(undefined, finish);
+    });
+  };
+
+  /** 저장 이벤트마다 부른다. 바뀐 파일 경로를 주면 debounce 동안 모아 `--changed` 로 넘긴다. */
+  const schedule = (path?: string) => {
+    if (path) queued.add(path);
+    else pendingFull = true;
     if (timer) clearTimeout(timer);
-    timer = setTimeout(build, debounceMs);
+    timer = setTimeout(() => { timer = undefined; build(); }, debounceMs);
   };
 
   return {build, schedule};
+}
+
+/** `scripts/llmwiki.py build` 의 인자. 경로가 있으면 `--changed` 뒤에 붙인다 (증분 힌트). */
+export function buildArgs(changed?: string[]): string[] {
+  const args = ["scripts/llmwiki.py", "build"];
+  if (changed && changed.length > 0) args.push("--changed", ...changed);
+  return args;
 }
 
 /** wiki 아래 json 의 경로 → "mtime:size". 추가·삭제·수정이 모두 이 비교로 잡힌다. */
@@ -95,6 +127,14 @@ export function snapshot(wikiRoot: string): Map<string, string> {
 const same = (a: Map<string, string>, b: Map<string, string>) =>
   a.size === b.size && [...a].every(([key, value]) => b.get(key) === value);
 
+/** 두 스냅샷 사이에 추가·삭제·수정된 경로 (정렬, 중복 없음). */
+export function changedPaths(previous: Map<string, string>, current: Map<string, string>): string[] {
+  const out = new Set<string>();
+  for (const [key, value] of current) if (previous.get(key) !== value) out.add(key);
+  for (const key of previous.keys()) if (!current.has(key)) out.add(key);
+  return [...out].sort();
+}
+
 /** 주기적으로 스냅샷을 비교해 build 를 건다.
  *
  * inotify 가 아니라 폴링을 쓰는 이유: Docker Desktop 의 bind mount 는 호스트의 파일 변경
@@ -112,7 +152,8 @@ export function pollWikiData(options: WikiDataOptions & {intervalMs?: number}) {
   return setInterval(() => {
     const current = snapshot(wikiRoot);
     if (same(previous, current)) return;
+    const changed = changedPaths(previous, current);
     previous = current;
-    build();
+    build(changed);
   }, intervalMs);
 }

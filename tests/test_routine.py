@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -32,6 +33,17 @@ class RoutineCase(WorkspaceCase):
         self.root_path = Path(self.root).resolve()
         self.state = self.root_path / "state"
         os.environ[routine.ENV_STATE_DIR] = str(self.state)
+        # 시험이 진짜 ~/.claude 나 ~/.codex 를 건드리지 않게 홈을 갈아 끼운다.
+        self.task_home = self.root_path / "agent-home"
+        self.task_home.mkdir(exist_ok=True)
+        os.environ[routine.ENV_TASK_HOME] = str(self.task_home)
+        self.install_agent_guard()
+
+    def enable_agent_tasks(self, agent: str = "claude") -> Path:
+        """그 에이전트가 주기 작업 자리를 가진 것처럼 만든다."""
+        base = self.task_home / routine.AGENT_TASK_DIRS[agent]
+        base.mkdir(parents=True, exist_ok=True)
+        return base
 
     def cli(self, *argv: str, expect: int = 0) -> subprocess.CompletedProcess[str]:
         env = {**os.environ, routine.ENV_STATE_DIR: str(self.state)}
@@ -41,11 +53,41 @@ class RoutineCase(WorkspaceCase):
         self.assertEqual(proc.returncode, expect, proc.stdout + proc.stderr)
         return proc
 
+    def install_agent_guard(self) -> None:
+        """시험이 진짜 claude·codex 를 부르는 일은 없어야 한다.
+
+        기본값은 '쓸 수 있는 에이전트 없음' 이고, 부르고 싶은 시험만
+        `offer_agent` 로 가짜를 하나 등록한다. 등록되지 않은 이름으로 나가는
+        호출은 여기서 잡아 시험을 깨뜨린다.
+        """
+        self.agents: dict[str, tuple[int, str]] = {}
+        self.agent_calls: list[list[str]] = []
+        original_run = routine.run
+        original_available = routine.agent_available
+
+        def fake_run(argv, **kwargs):
+            name = Path(argv[0]).name if argv else ""
+            if name in routine.AGENTS:
+                self.agent_calls.append(list(argv))
+                if name not in self.agents:
+                    raise AssertionError(f"등록하지 않은 에이전트를 불렀다: {name}")
+                return self.agents[name]
+            return original_run(argv, **kwargs)
+
+        routine.run = fake_run  # type: ignore[assignment]
+        routine.agent_available = lambda name: name in self.agents  # type: ignore[assignment]
+        self.addCleanup(setattr, routine, "run", original_run)
+        self.addCleanup(setattr, routine, "agent_available", original_available)
+
+    def offer_agent(self, agent: str = "claude", *, code: int = 0,
+                    out: str = "끝났다") -> None:
+        self.agents[agent] = (code, out)
+
+    def calls_to(self, agent: str) -> list[list[str]]:
+        return [c for c in self.agent_calls if Path(c[0]).name == agent]
+
     def block_the_agent(self) -> None:
-        """테스트가 진짜 에이전트를 깨우지 않게 막는다."""
-        original = routine.agent_available
-        routine.agent_available = lambda _agent: False  # type: ignore[assignment]
-        self.addCleanup(setattr, routine, "agent_available", original)
+        """이제는 기본값이다. 읽는 사람을 위해 이름만 남겨 둔다."""
 
     def write_raw_file(self, rel: str, text: str = "내용") -> Path:
         path = self.root_path / "raw" / rel
@@ -99,6 +141,28 @@ class PendingTest(RoutineCase):
                                                                           encoding="utf-8")
         self.assertEqual(routine.pending_sources(self.root_path), ["raw/소스.md"])
 
+    def test_a_page_that_only_logs_the_source_still_counts(self) -> None:
+        # 에이전트가 page 를 손으로 쓰면 raw_ref 를 빠뜨리는 일이 잦다. 그걸
+        # 미처리로 세면 이미 넣은 소스를 영원히 다시 넣으려 든다.
+        self.write_raw_file("손으로-넣음.md")
+        page = make_page("손으로-넣음", "# 손으로 넣음\n\n본문.\n")
+        page["history"] = [{"at": "2026-08-19", "action": "ingested", "actor": "claude",
+                            "note": "raw/손으로-넣음.md"}]
+        self.write_pages([page])
+        self.assertEqual(routine.pending_sources(self.root_path), [])
+
+    def test_an_absolute_raw_ref_is_the_same_source(self) -> None:
+        self.write_raw_file("절대경로.md")
+        page = make_page("절대경로", "# 절대경로\n\n본문.\n")
+        page["raw_ref"] = str(self.root_path / "raw" / "절대경로.md")
+        self.write_pages([page])
+        self.assertEqual(routine.pending_sources(self.root_path), [])
+
+    def test_hidden_folders_inside_raw_are_not_sources(self) -> None:
+        self.write_raw_file(".obsidian/workspace.json")
+        self.write_raw_file("진짜.md")
+        self.assertEqual(routine.pending_sources(self.root_path), ["raw/진짜.md"])
+
     def test_pending_command_reports_json(self) -> None:
         self.write_raw_file("소스.md")
         payload = json.loads(self.cli("pending").stdout)
@@ -132,7 +196,7 @@ class RunOrderTest(RoutineCase):
     def test_a_repeat_of_the_same_backlog_is_skipped(self) -> None:
         # 에이전트가 이미 보고 판단한 목록으로 매시간 다시 깨우지 않는다.
         self.write_raw_file("소스.md")
-        routine.write_seen(["raw/소스.md"])
+        routine.write_seen(self.root_path, ["raw/소스.md"])
         report = routine.do_run(self.root_path, agent="claude", remote="private",
                                 push=False, dry_run=False, timeout=5.0)
         self.assertEqual(report.get("skipped"), "nothing-to-do")
@@ -142,35 +206,94 @@ class RunOrderTest(RoutineCase):
         self.block_the_agent()
         self.write_raw_file("소스.md")
         self.write_raw_file("새것.md")
-        routine.write_seen(["raw/소스.md"])
+        routine.write_seen(self.root_path, ["raw/소스.md"])
         report = routine.do_run(self.root_path, agent="claude", remote="private",
                                 push=False, dry_run=False, timeout=5.0)
         self.assertNotEqual(report.get("skipped"), "nothing-to-do")
 
-    def test_a_failed_agent_does_not_retry_the_same_backlog_forever(self) -> None:
+    def fail_the_agent(self) -> list[list[str]]:
+        """claude 를 부르면 실패하게 만든다. 호출 기록을 돌려준다."""
+        self.offer_agent("claude", code=1, out="실패했다")
+        return self.agent_calls
+
+    def freeze(self, moment: float) -> None:
+        original = routine.now
+        routine.now = lambda: moment  # type: ignore[assignment]
+        self.addCleanup(setattr, routine, "now", original)
+
+    def once(self) -> dict:
+        return routine.do_run(self.root_path, agent="claude", remote="private",
+                              push=False, dry_run=False, timeout=5.0)
+
+    def test_a_failed_agent_does_not_retry_the_same_backlog_every_hour(self) -> None:
         # 타임아웃·인증 오류로 실패해도 같은 목록으로 매시간 다시 깨우지 않는다.
         self.write_raw_file("소스.md")
-        calls = []
-        original = routine.run
+        calls = self.fail_the_agent()
+        self.assertEqual(self.once().get("stopped"), "agent-failed")
+        self.assertEqual(self.once().get("skipped"), "nothing-to-do")
+        self.assertEqual(len(self.calls_to("claude")), 1, "실패한 backlog 로 곧바로 다시 불렀다")
 
-        def fake_run(argv, **kwargs):
-            if argv and "claude" in argv[0]:
-                calls.append(argv)
-                return 1, "실패했다"
-            return original(argv, **kwargs)
+    def test_a_failed_backlog_is_retried_once_the_wait_is_over(self) -> None:
+        # 한 번의 실패가 그 소스를 영영 미처리로 묻으면 안 된다. 간격을 두고
+        # 다시 시도한다 — 이걸 안 하면 못 들어간 소스만 계속 쌓인다.
+        self.write_raw_file("소스.md")
+        calls = self.fail_the_agent()
+        start = 1_000_000.0
+        self.freeze(start)
+        self.assertEqual(self.once().get("stopped"), "agent-failed")
+        self.freeze(start + routine.RETRY_BASE_SECONDS + 60)
+        self.assertEqual(self.once().get("stopped"), "agent-failed")
+        self.assertEqual(len(self.calls_to("claude")), 2, "기다린 뒤에도 다시 부르지 않았다")
 
-        routine.run = fake_run  # type: ignore[assignment]
-        routine.agent_available = lambda _a: True  # type: ignore[assignment]
-        self.addCleanup(setattr, routine, "run", original)
-        self.addCleanup(setattr, routine, "agent_available", routine.agent_available)
+    def test_no_backlog_is_ever_given_up_on(self) -> None:
+        # 몇 번을 실패했든 접지 않는다. 하루가 지나면 반드시 다시 넣어 본다.
+        record = {"pending": ["raw/소스.md"], "outcome": "failed",
+                  "attempts": 99, "at": 0.0}
+        verdict, _ = routine.seen_verdict(record, ["raw/소스.md"], 10 ** 9)
+        self.assertEqual(verdict, "go")
 
-        first = routine.do_run(self.root_path, agent="claude", remote="private",
-                               push=False, dry_run=False, timeout=5.0)
-        self.assertEqual(first.get("stopped"), "agent-failed")
-        second = routine.do_run(self.root_path, agent="claude", remote="private",
-                                push=False, dry_run=False, timeout=5.0)
-        self.assertEqual(second.get("skipped"), "nothing-to-do")
-        self.assertEqual(len(calls), 1, "실패한 backlog 로 에이전트를 다시 불렀다")
+    def test_a_source_the_agent_skipped_is_tried_again_later(self) -> None:
+        # 에이전트가 "이건 못 넣겠다" 고 두고 간 것도 영영 두지 않는다.
+        record = {"pending": ["raw/소스.md"], "outcome": "done", "attempts": 1, "at": 0.0}
+        early, _ = routine.seen_verdict(record, ["raw/소스.md"], routine.RETRY_BASE_SECONDS - 60)
+        self.assertEqual(early, "waiting")
+        later, _ = routine.seen_verdict(record, ["raw/소스.md"], routine.RETRY_BASE_SECONDS + 60)
+        self.assertEqual(later, "go")
+
+    def test_the_other_agent_gets_a_turn_when_the_first_one_fails(self) -> None:
+        # 넣는 것이 목적이지 특정 에이전트를 부르는 것이 목적이 아니다.
+        self.write_raw_file("소스.md")
+        self.offer_agent("claude", code=1, out="죽었다")
+        self.offer_agent("codex", code=0, out="넣었다")
+        report = self.once()
+        self.assertEqual(self.calls_to("claude")[0][0], "claude", "고른 쪽을 먼저 부르지 않았다")
+        self.assertEqual(report["agent_used"], "codex", "다른 에이전트로 다시 해 보지 않았다")
+
+    def test_a_broken_build_goes_back_to_the_agent(self) -> None:
+        # 깨진 채로 멈추면 그 소스는 영영 위키에 못 들어간다. 고쳐서 넣는다.
+        self.write_raw_file("소스.md")
+        self.offer_agent("claude")
+        stages = ["validate", ""]
+        routine_rebuild = routine.rebuild
+        routine.rebuild = lambda _root: (stages.pop(0), "결과")  # type: ignore[assignment]
+        self.addCleanup(setattr, routine, "rebuild", routine_rebuild)
+        report = self.once()
+        self.assertNotIn("stopped", report, report)
+        self.assertEqual(len(self.calls_to("claude")), 2, "고치라고 되돌리지 않았다")
+        self.assertIn("repair", [s["step"] for s in report["steps"]])
+
+    def test_the_backoff_grows_but_has_a_ceiling(self) -> None:
+        self.assertEqual(routine.retry_delay(1), routine.RETRY_BASE_SECONDS)
+        self.assertEqual(routine.retry_delay(2), routine.RETRY_BASE_SECONDS * 2)
+        self.assertEqual(routine.retry_delay(99), routine.RETRY_MAX_SECONDS)
+
+    def test_two_repositories_do_not_share_one_backlog(self) -> None:
+        # 상태 파일 하나를 두 clone 이 나눠 쓰면, 한쪽의 판단이 다른 쪽의
+        # 새 소스를 가린다.
+        other = self.root_path / "다른-저장소"
+        other.mkdir()
+        routine.write_seen(self.root_path, ["raw/소스.md"])
+        self.assertEqual(routine.read_seen(other), {})
 
     def test_a_commit_left_unpushed_is_pushed_next_time(self) -> None:
         # push 가 실패해도 워킹트리는 깨끗하고 raw 는 처리된 상태다. 다음 주기에
@@ -193,8 +316,18 @@ class RunOrderTest(RoutineCase):
         self.assertTrue(steps["push-pending"]["ok"], steps["push-pending"])
         self.assertEqual(routine.unpushed_commits(self.root_path, "private", "main"), 0)
 
+    def test_a_lock_left_by_a_dead_process_is_reclaimed(self) -> None:
+        # 재부팅·강제 종료로 남은 락 하나가 여섯 시간을 잡아먹으면, 그동안
+        # 들어온 소스는 전부 미처리로 쌓인다.
+        path = routine.lock_file(self.root_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("999999999", encoding="utf-8")  # 살아 있을 리 없는 pid
+        lock = routine.acquire_lock(self.root_path)
+        self.assertIsNotNone(lock)
+        self.addCleanup(lambda: lock and lock.exists() and lock.unlink())
+
     def test_two_routines_do_not_overlap(self) -> None:
-        held = routine.acquire_lock()
+        held = routine.acquire_lock(self.root_path)
         self.addCleanup(lambda: held and held.exists() and held.unlink())
         self.write_raw_file("소스.md")
         report = routine.do_run(self.root_path, agent="claude", remote="private",
@@ -266,76 +399,6 @@ class GitDisciplineTest(RoutineCase):
         self.assertFalse(ok)
         self.assertIn("조회할 수 없다", detail)
 
-    def test_cron_spec_keeps_the_interval_even_across_midnight(self) -> None:
-        # `*/N` 은 한 자리 안에서만 도므로, 그 자리의 약수가 아니면 하루
-        # 경계에서 간격이 어긋난다. 약수로만 내려 적는다.
-        self.assertEqual(routine.cron_spec(1800), "*/30 * * * *")
-        self.assertEqual(routine.cron_spec(3600), "@hourly")
-        self.assertEqual(routine.cron_spec(7200), "0 */2 * * *")
-        self.assertEqual(routine.cron_spec(5 * 3600), "0 */4 * * *")
-        self.assertEqual(routine.cron_spec(7 * 60), "*/6 * * * *")
-        self.assertEqual(routine.cron_spec(86400), "0 0 * * *")
-        self.assertEqual(routine.cron_spec(3 * 86400), "0 0 * * *")
-
-    def test_an_unreadable_crontab_is_never_overwritten(self) -> None:
-        original = routine.run
-        wrote = []
-
-        def fake_run(argv, **kwargs):
-            if argv[:2] == ["crontab", "-l"]:
-                return 1, "crontab: permission denied"
-            if argv[:1] == ["crontab"]:
-                wrote.append(argv)
-            return original(argv, **kwargs)
-
-        routine.run = fake_run  # type: ignore[assignment]
-        self.addCleanup(setattr, routine, "run", original)
-        readable, _ = routine.crontab_read()
-        self.assertFalse(readable)
-        self.assertEqual(wrote, [], "읽지도 못한 crontab 을 덮어썼다")
-
-    def test_a_missing_crontab_is_not_an_error(self) -> None:
-        original = routine.run
-        routine.run = lambda argv, **kw: (1, "no crontab for user")  # type: ignore[assignment]
-        self.addCleanup(setattr, routine, "run", original)
-        readable, text = routine.crontab_read()
-        self.assertTrue(readable)
-        self.assertEqual(text, "")
-
-    def test_ownership_survives_an_escaped_path(self) -> None:
-        # plist 는 escape 해 쓰는데 검사만 원본으로 하면 자기 것을 못 알아본다.
-        path = self.root_path / "escaped.plist"
-        argv = [sys.executable, str(Path(routine.__file__).resolve()), "run"]
-        path.write_text(routine.plist_body(argv, 3600), encoding="utf-8")
-        original = routine.plist_path
-        routine.plist_path = lambda: path  # type: ignore[assignment]
-        self.addCleanup(setattr, routine, "plist_path", original)
-        self.assertTrue(routine.ours_launchd(path))
-
-    def test_a_failed_unload_keeps_the_plist(self) -> None:
-        if routine.scheduler_kind() != "launchd":
-            self.skipTest("launchd 가 아닌 호스트")
-        path = self.root_path / "running.plist"
-        argv = [sys.executable, str(Path(routine.__file__).resolve()), "run"]
-        path.write_text(routine.plist_body(argv, 3600), encoding="utf-8")
-        original_path, original_run = routine.plist_path, routine.run
-        routine.plist_path = lambda: path  # type: ignore[assignment]
-        routine.run = lambda a, **k: (1, "unload 실패")  # type: ignore[assignment]
-        self.addCleanup(setattr, routine, "plist_path", original_path)
-        self.addCleanup(setattr, routine, "run", original_run)
-        routine.record_state(self.root_path, "claude", interval=3600, remote="private",
-                             push=True, kind="launchd")
-        plan = routine.uninstall_schedule(dry_run=False)
-        self.assertFalse(plan["ok"])
-        self.assertTrue(path.exists(), "내리지도 못했는데 plist 를 지웠다")
-        self.assertTrue(routine.state_file().exists())
-
-    def test_plist_escapes_paths(self) -> None:
-        body = routine.plist_body(["/usr/bin/python3", "/tmp/a&b/<x>/run.py"], 3600)
-        self.assertIn("&amp;", body)
-        self.assertIn("&lt;x&gt;", body)
-        self.assertNotIn("a&b", body)
-
     def test_the_project_group_file_is_committed_too(self) -> None:
         # ingest 가 모르는 프로젝트를 만나면 groups.json 을 직접 고친다. 이걸
         # 빼 두면 커밋되지 않은 채 남아 다음 차례가 dirty tree 에서 멈춘다.
@@ -346,6 +409,52 @@ class GitDisciplineTest(RoutineCase):
         self.assertTrue(ok)
         _, out = self.git("show", "--name-only", "--format=", "HEAD")
         self.assertIn("tools/config/groups.json", out)
+
+    def test_leftover_from_a_broken_run_is_finished_next_time(self) -> None:
+        # build 가 깨지거나 에이전트가 죽어 커밋되지 못한 변경이 남으면, 그
+        # 다음 차례부터 전부 더러운 트리에서 멈춘다. 우리가 남긴 것은 우리가
+        # 이어서 끝낸다.
+        self.init_repo()
+        self.stub_rebuild("")
+        routine.mark_inflight(self.root_path, "main")
+        (self.root_path / "wiki" / "concepts" / "이월.json").write_text("[]", encoding="utf-8")
+        ok, detail = routine.finish_leftover(self.root_path, "private", "main")
+        self.assertTrue(ok, detail)
+        self.assertEqual(routine.changed_paths(self.root_path), [])
+        self.assertEqual(routine.read_inflight(self.root_path), {})
+
+    def test_leftover_that_still_does_not_build_is_not_committed(self) -> None:
+        # 깨진 정본을 커밋해 원격까지 밀지 않는다. 멈추되 이유를 남긴다.
+        self.init_repo()
+        self.stub_rebuild("validate")
+        routine.mark_inflight(self.root_path, "main")
+        (self.root_path / "wiki" / "concepts" / "이월.json").write_text("[]", encoding="utf-8")
+        ok, detail = routine.finish_leftover(self.root_path, "private", "main")
+        self.assertFalse(ok)
+        self.assertIn("validate", detail)
+        self.assertTrue(routine.read_inflight(self.root_path), "표시를 지우면 다음 차례가 막힌다")
+
+    def stub_rebuild(self, stage: str) -> None:
+        original = routine.rebuild
+        routine.rebuild = lambda _root: (stage, f"{stage or 'build · validate'} 결과")  # type: ignore[assignment]
+        self.addCleanup(setattr, routine, "rebuild", original)
+
+    def test_a_dirty_tree_that_is_not_ours_is_left_alone(self) -> None:
+        # 사람이 편집 중인 것은 우리가 커밋하지 않는다.
+        self.init_repo()
+        (self.root_path / "wiki" / "concepts" / "사람.json").write_text("[]", encoding="utf-8")
+        ok, detail = routine.finish_leftover(self.root_path, "private", "main")
+        self.assertTrue(ok)
+        self.assertEqual(detail, "")
+        self.assertTrue(routine.changed_paths(self.root_path))
+
+    def test_edits_outside_the_wiki_do_not_stop_the_routine(self) -> None:
+        # viewer/ 를 고치는 중이라고 해서 위키 ingest 까지 세우지 않는다.
+        self.init_repo()
+        (self.root_path / "viewer").mkdir(exist_ok=True)
+        (self.root_path / "viewer" / "App.tsx").write_text("건드리는 중", encoding="utf-8")
+        ok, detail = routine.pull_first(self.root_path, "private", "main")
+        self.assertTrue(ok, detail)
 
     def test_a_detached_head_stops_the_routine(self) -> None:
         self.init_repo()
@@ -414,6 +523,98 @@ class PrivateRemoteTest(RoutineCase):
 
 
 # --------------------------------------------------------------------------- 스케줄러
+class SchedulerPriorityTest(RoutineCase):
+    """정석은 에이전트 자신의 루틴, OS 스케줄러는 폴백."""
+
+    def install(self, **kwargs) -> dict:
+        opts = {"interval": 3600, "python": None, "remote": "private", "push": True,
+                "dry_run": False, **kwargs}
+        agent = opts.pop("agent", "claude")
+        return routine.install_schedule(self.root_path, agent, **opts)
+
+    def test_the_agents_own_routine_comes_first(self) -> None:
+        self.enable_agent_tasks("claude")
+        self.assertEqual(routine.scheduler_kind("claude"), "claude-task")
+
+    def test_an_agent_without_a_routine_slot_has_nowhere_to_hang_it(self) -> None:
+        self.assertEqual(routine.scheduler_kind("codex"), "")
+
+    def test_installing_writes_the_task_the_agent_itself_reads(self) -> None:
+        self.enable_agent_tasks("claude")
+        plan = self.install()
+        self.assertTrue(plan["ok"], plan)
+        self.assertEqual(plan["scheduler"], "claude-task")
+        body = Path(plan["file"]).read_text(encoding="utf-8")
+        self.assertIn(routine.TASK_MARKER, body)
+        self.assertIn("llmwiki_routine.py", body)
+        self.assertIn(str(self.root_path), body)
+        self.assertEqual(routine.read_state()["scheduler"], "claude-task")
+
+    def test_a_task_written_by_hand_is_left_alone(self) -> None:
+        # 사람이 직접 쓴 같은 이름의 작업을 덮어쓰지 않는다.
+        base = self.enable_agent_tasks("claude")
+        mine = base / routine.TASK_NAME / "SKILL.md"
+        mine.parent.mkdir(parents=True)
+        mine.write_text("---\nname: llmwiki-ingest\n---\n내가 쓴 것\n", encoding="utf-8")
+        plan = self.install()
+        self.assertFalse(plan["ok"])
+        self.assertIn("우리가 만든 것이 아니다", plan["detail"])
+        self.assertIn("내가 쓴 것", mine.read_text(encoding="utf-8"))
+        self.assertFalse(routine.state_file().exists())
+
+    def test_uninstall_removes_only_our_own_task(self) -> None:
+        self.enable_agent_tasks("claude")
+        plan = self.install()
+        path = Path(plan["file"])
+        self.assertTrue(path.exists())
+        removed = routine.uninstall_schedule(dry_run=False)
+        self.assertTrue(removed["ok"], removed)
+        self.assertFalse(path.exists())
+        self.assertFalse(routine.state_file().exists())
+
+    def test_uninstall_follows_what_install_recorded(self) -> None:
+        # 지금 OS 를 다시 물으면 자체 루틴으로 걸어 둔 것을 놓친다.
+        self.enable_agent_tasks("claude")
+        self.install()
+        self.assertEqual(routine.uninstall_schedule(dry_run=True)["scheduler"], "claude-task")
+
+    def test_an_agent_without_a_slot_fails_loudly(self) -> None:
+        plan = self.install(agent="codex")
+        self.assertFalse(plan["ok"])
+        self.assertIn("자리가 없다", plan["detail"])
+        self.assertFalse(routine.state_file().exists())
+
+    def test_the_cli_install_runs_end_to_end(self) -> None:
+        # 시험이 함수만 부르면 CLI 배선이 끊긴 것을 못 잡는다.
+        self.enable_agent_tasks("claude")
+        payload = json.loads(self.cli("install", "--agent", "claude", "--dry-run").stdout)
+        self.assertEqual(payload["scheduler"], "claude-task")
+        self.assertTrue(payload["dry_run"])
+
+    def test_the_plan_names_where_it_will_hang(self) -> None:
+        self.enable_agent_tasks("claude")
+        plan = self.install(dry_run=True)
+        self.assertEqual(plan["scheduler"], "claude-task")
+
+    def test_a_routine_that_stopped_firing_is_reported(self) -> None:
+        # 걸어 두기만 하고 실제로 돌지 않는 것이 제일 위험하다 — 미처리만 쌓인다.
+        ok, detail = routine.firing_check(3600)
+        self.assertFalse(ok)
+        self.assertIn("실행 기록이 없다", detail)
+        routine.log("돌았다")
+        ok, detail = routine.firing_check(3600)
+        self.assertTrue(ok, detail)
+
+    def test_a_stale_log_points_at_the_agent_routine(self) -> None:
+        routine.log("옛날에 돌았다")
+        original = routine.now
+        routine.now = lambda: time.time() + 5 * 3600  # type: ignore[assignment]
+        self.addCleanup(setattr, routine, "now", original)
+        ok, detail = routine.firing_check(3600)
+        self.assertFalse(ok)
+        self.assertIn("에이전트 주기 작업", detail)
+
+
 class ScheduleOwnershipTest(RoutineCase):
     def test_install_plan_pins_the_repo_and_agent(self) -> None:
         plan = routine.install_schedule(self.root_path, "codex", interval=1800,
@@ -439,62 +640,6 @@ class ScheduleOwnershipTest(RoutineCase):
                                         python=None, remote="private", push=False,
                                         dry_run=True)
         self.assertIn("--no-push", plan["command"])
-
-    def test_a_foreign_launchd_entry_is_left_alone(self) -> None:
-        if routine.scheduler_kind() != "launchd":
-            self.skipTest("launchd 가 아닌 호스트")
-        path = self.root_path / "foreign.plist"
-        path.write_text("<plist>남의 것</plist>", encoding="utf-8")
-        original = routine.plist_path
-        routine.plist_path = lambda: path  # type: ignore[assignment]
-        self.addCleanup(setattr, routine, "plist_path", original)
-        plan = routine.install_schedule(self.root_path, "claude", interval=3600,
-                                        python=None, remote="private", push=True,
-                                        dry_run=False)
-        self.assertFalse(plan["ok"])
-        self.assertEqual(path.read_text(encoding="utf-8"), "<plist>남의 것</plist>")
-        self.assertFalse(routine.state_file().exists())
-
-    def test_uninstall_leaves_an_entry_that_stopped_being_ours(self) -> None:
-        if routine.scheduler_kind() != "launchd":
-            self.skipTest("launchd 가 아닌 호스트")
-        path = self.root_path / "swapped.plist"
-        path.write_text("<plist>다른 사람이 갈아치웠다</plist>", encoding="utf-8")
-        original = routine.plist_path
-        routine.plist_path = lambda: path  # type: ignore[assignment]
-        self.addCleanup(setattr, routine, "plist_path", original)
-        routine.record_state(self.root_path, "claude", interval=3600, remote="private",
-                             push=True, kind="launchd")
-        plan = routine.uninstall_schedule(dry_run=False)
-        self.assertTrue(plan["ok"])
-        self.assertTrue(path.exists(), "우리 것이 아닌 항목을 지웠다")
-
-    def test_failed_install_records_no_state(self) -> None:
-        if routine.scheduler_kind() != "launchd":
-            self.skipTest("launchd 가 아닌 호스트")
-        path = self.root_path / "foreign2.plist"
-        path.write_text("남의 것", encoding="utf-8")
-        original = routine.plist_path
-        routine.plist_path = lambda: path  # type: ignore[assignment]
-        self.addCleanup(setattr, routine, "plist_path", original)
-        routine.install_schedule(self.root_path, "claude", interval=3600, python=None,
-                                 remote="private", push=True, dry_run=False)
-        self.assertFalse(routine.state_file().exists())
-
-    def test_a_failed_removal_keeps_the_ownership_record(self) -> None:
-        # 지우지 못했는데 기록만 지우면, 다음 uninstall 이 그 항목에 손대지 못한다.
-        if routine.scheduler_kind() != "cron":
-            original_kind = routine.scheduler_kind
-            routine.scheduler_kind = lambda: "cron"  # type: ignore[assignment]
-            self.addCleanup(setattr, routine, "scheduler_kind", original_kind)
-        original_run = routine.run
-        routine.run = lambda argv, **kw: (1, "crontab: permission denied")  # type: ignore[assignment]
-        self.addCleanup(setattr, routine, "run", original_run)
-        routine.record_state(self.root_path, "claude", interval=3600, remote="private",
-                             push=True, kind="cron")
-        plan = routine.uninstall_schedule(dry_run=False)
-        self.assertFalse(plan["ok"])
-        self.assertTrue(routine.state_file().exists(), "지우지 못했는데 기록을 버렸다")
 
     def test_status_is_json_even_before_install(self) -> None:
         payload = json.loads(self.cli("status").stdout)

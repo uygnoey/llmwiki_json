@@ -169,20 +169,51 @@ scripts/install.sh [install|verify|uninstall|doctor|update] [옵션]
 
 ### 주기 ingest 루틴
 
-`--ingest-routine` 을 고르면 OS 스케줄러(launchd · cron · schtasks)에 등록한다.
+`--ingest-routine` 을 고르면 **에이전트 자신의 주기 작업**으로 등록한다 —
+`claude` 는 `~/.claude/scheduled-tasks/llmwiki-ingest/SKILL.md`, `codex` 는
+`~/.codex/scheduled-tasks/…`. 그 자리에서 부르면 인증·모델·권한이 이미 갖춰진
+채로 돈다. OS 스케줄러(launchd · cron · schtasks)는 쓰지 않는다 — 부르는 자리가
+둘이면 무엇이 돌았는지도 둘로 갈린다.
+
+같은 이름의 작업이 이미 있고 우리가 쓴 것이 아니면 **덮어쓰지 않는다** (직접
+쓴 `llmwiki-ingest` 가 있으면 그대로 둔다). 그 에이전트에 주기 작업 자리가
+없으면 말없이 다른 데 걸지 않고 실패로 알린다. `uninstall` 은 등록할 때 적어
+둔 자리만 되짚어 지운다.
+
+`status` 는 등록 여부가 아니라 **마지막 실행 시각**으로 판정한다. 주기의 두 배가
+넘도록 돈 적이 없으면 `firing: false` 와 종료 코드 1 을 낸다 — 걸어 두기만 하고
+안 도는 것이 제일 위험하다.
+
 한 번 돌 때의 순서는 이렇다:
 
-1. **`git pull`** — `private` remote 가 있으면 ff-only 로 맞춘다. 워킹트리가
-   더럽거나 히스토리가 갈라졌으면 **여기서 멈춘다**.
-2. 미처리 raw 소스 확인 — 없으면 에이전트를 부르지 않는다. 목록이 지난번과
-   같아도(에이전트가 이미 보고 판단한 것이면) 건너뛴다.
-3. 에이전트에게 ingest 를 맡긴다.
-4. `build` · `validate` — 깨졌으면 커밋하지 않는다.
+0. **이월분 정리** — 지난 차례가 도중에 끊겨 커밋되지 못한 변경이 남아 있으면
+   먼저 `build` · `validate` 후 커밋해 끝낸다. 우리가 남긴 것(에이전트를 부르기
+   직전에 남긴 표시가 있는 것)만 손댄다. 이걸 안 하면 한 번의 실패가 이후의
+   모든 차례를 '더러운 트리' 에서 세운다.
+1. **`git pull`** — `private` remote 가 있으면 ff-only 로 맞춘다. 루틴이 쓰는
+   경로(`wiki/` · `index/` · `viewer/public/data` · `tools/config/groups.json`)가
+   더럽거나 히스토리가 갈라졌으면 **여기서 멈춘다**. 그 밖의 경로를 사람이
+   편집 중인 것은 막지 않는다.
+2. 미처리 raw 소스 확인 — 없으면 에이전트를 부르지 않는다. **안 들어간 소스를
+   접는 자리는 없다.** 실패였든 에이전트가 건너뛴 판단이었든, 남아 있는 한
+   1 → 2 → 4 … 최대 하루 간격으로 계속 다시 넣어 본다. 목록이 지난번과 같을
+   때 간격을 두는 것뿐이지, 포기하는 것이 아니다.
+3. 에이전트에게 ingest 를 맡긴다. 고른 에이전트가 없거나 실패하면 **다른
+   에이전트로 한 번 더** 해 본다 — 넣는 것이 목적이지 특정 에이전트를 부르는
+   것이 목적이 아니다. `build` · `validate` 는 루틴이 직접 돌린다.
+4. `build` · `validate` — 깨졌으면 멈추지 않고 그 출력을 **에이전트에게 되돌려
+   고치게 한 뒤** 다시 검증한다. 그래도 안 되면 커밋하지 않고 남겨 두는데,
+   다음 차례가 이월분으로 다시 고쳐 본다.
 5. `wiki/` · `index/` · `viewer/public/data` 만 커밋하고 `private` 으로 push.
 
+소스가 이미 들어갔는지는 page 의 `raw_ref` 로 판정한다. 없으면 `history` 의
+note 와 `source_snapshot` 도 함께 본다 — 손으로 쓴 page 가 `raw_ref` 를 빠뜨려도
+이미 넣은 소스를 다시 넣으려 들지 않게.
+
 `raw/.llmwikiignore` 에 glob 을 적어 소스가 아닌 파일을 뺄 수 있다. 겹쳐 도는
-것은 `$HOME/.llmwiki/routine.lock` 이 막고, 진행은 `$HOME/.llmwiki/routine.log`
-에 쌓인다. 등록 사실은 `$HOME/.llmwiki/installed-routine` 에만 기록하며,
+것은 `$HOME/.llmwiki/routine-<저장소>.lock` 이 막고(주인 프로세스가 죽었으면
+곧바로 회수한다), 진행은 `$HOME/.llmwiki/routine.log` 에 쌓인다. 미처리 판정
+상태는 저장소마다 따로 `routine-seen-<저장소>.json` 에 둔다. 등록 사실은 `$HOME/.llmwiki/installed-routine` 에만 기록하며,
 `uninstall` 은 그 기록이 있을 때만 스케줄러 항목을 지운다.
 
 ### 개인 저장소

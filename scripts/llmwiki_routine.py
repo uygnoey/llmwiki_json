@@ -4,8 +4,9 @@
 설계 원칙은 hook 과 같다. 조용하고, 실패해도 남의 것을 망가뜨리지 않으며,
 우리가 만든 것만 되돌린다.
 
-  run        한 번 돈다 (스케줄러가 부르는 것). git pull 이 언제나 첫 단계다.
-  install    OS 스케줄러에 등록한다 (launchd · cron · schtasks)
+  run        한 번 돈다 (스케줄러가 부르는 것). 지난 차례가 남긴 것을 먼저
+             마무리하고, 그 다음이 언제나 git pull 이다.
+  install    에이전트 자신의 주기 작업으로 등록한다
   uninstall  우리가 등록한 것만 지운다
   status     등록 상태와 마지막 실행 결과
   git-setup  개인 private 저장소를 remote 로 붙인다 (origin 은 그대로 둔다)
@@ -18,9 +19,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
-import platform
 import re
 import shlex
 import shutil
@@ -29,7 +30,6 @@ import sys
 import time
 from fnmatch import fnmatch
 from pathlib import Path
-from xml.sax.saxutils import escape as xml_escape
 from typing import Any, Iterable
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
@@ -37,19 +37,46 @@ DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 ENV_ROOT = "LLMWIKI_ROOT"
 ENV_STATE_DIR = "LLMWIKI_STATE_DIR"
 ENV_NOW = "LLMWIKI_NOW"
+# 에이전트 주기 작업이 놓이는 홈. 시험이 진짜 ~/.claude 를 건드리지 않게 한다.
+ENV_TASK_HOME = "LLMWIKI_TASK_HOME"
 
 AGENTS = ("claude", "codex")
+
+# 주기는 에이전트가 자기 자리에서 부른다. 인증·모델·권한이 이미 갖춰져 있고,
+# 실패도 그 에이전트가 그대로 읽는다. OS 스케줄러는 쓰지 않는다.
+AGENT_TASK_DIRS = {"claude": Path(".claude/scheduled-tasks"),
+                   "codex": Path(".codex/scheduled-tasks")}
+TASK_NAME = "llmwiki-ingest"
+TASK_MARKER = "<!-- llmwiki-routine -->"
 DEFAULT_INTERVAL = 3600
 LABEL = "com.llmwiki.ingest"
 REMOTE = "private"
 LOCK_STALE_SECONDS = 6 * 3600
 
+# 안 들어간 소스는 들어갈 때까지 다시 시도한다. 포기하는 자리는 없다.
+# 간격만 늘려 매시간 같은 것으로 LLM 을 깨우지 않게 한다 — 하루에 한 번은 반드시.
+RETRY_BASE_SECONDS = 3600
+RETRY_MAX_SECONDS = 24 * 3600
+
+# build·validate 가 깨졌을 때 에이전트에게 되돌리는 지시. 멈춰 세우는 대신
+# 고쳐서 넣게 한다 — 깨진 채로 두면 그 소스는 영영 위키에 못 들어간다.
+REPAIR_PROMPT = (
+    "방금 ingest 한 결과가 {stage} 에서 깨졌다. 아래가 그 출력이다:\n\n{detail}\n\n"
+    "wiki/**/*.json 정본만 고쳐서 통과하게 만들어라. tools/schema/page.schema.json 이 "
+    "스키마 정본이다. raw/ 와 index/ · viewer/public/data 는 건드리지 마라 "
+    "(파생물은 루틴이 다시 만든다). 고칠 수 없는 page 는 지우지 말고 무엇이 왜 "
+    "안 되는지 마지막에 적어라."
+)
+
 # 에이전트에게 주는 지시. 스킬이 있으면 그것을 쓰고, 없으면 이 문장이 곧 명세다.
 INGEST_PROMPT = (
     "raw/ 에 아직 위키에 들어가지 않은 소스가 있다. 저장소 규칙(CLAUDE.md / AGENTS.md)에 "
     "따라 ingest 해라: 원문을 읽고 page 를 만들거나 갱신하고, 관련 page 와 "
-    "source/entity/concept/synthesis/project 관계를 잇고, wiki/log.jsonl 에 기록한 뒤 "
-    "build · validate · lint 를 돌려라. raw/ 는 수정하지 마라. "
+    "source/entity/concept/synthesis/project 관계를 잇고, wiki/log.jsonl 에 기록해라. "
+    "page 마다 raw_ref 에 원본의 저장소 상대경로(raw/…)를 반드시 적어라 — 이 자리가 비면 "
+    "루틴은 그 소스를 아직 넣지 않은 것으로 보고 계속 다시 부른다. "
+    "build · validate 는 이 루틴이 네 뒤에 직접 돌린다. 무인 실행이라 셸 명령은 "
+    "허용되지 않을 수 있으니 파일을 쓰는 것으로 끝내라. raw/ 는 수정하지 마라. "
     "보안 정보는 저장하지 말고 '(접속 정보 생략)' 으로 치환해라. "
     "판단이 서지 않는 소스는 건너뛰고 무엇을 왜 건너뛰었는지 마지막에 적어라."
 )
@@ -129,6 +156,45 @@ def git(root: Path, *args: str, timeout: float = 120.0) -> tuple[int, str]:
 
 
 # --------------------------------------------------------------------------- 미처리 소스
+def norm_ref(value: Any) -> str:
+    """경로처럼 생긴 값을 저장소 상대경로 모양으로 다듬는다."""
+    if not isinstance(value, str):
+        return ""
+    text = value.strip().replace("\\", "/")
+    if text.startswith("source:"):
+        text = text[len("source:"):]
+    while text.startswith("./"):
+        text = text[2:]
+    return text.strip()
+
+
+def page_raw_refs(page: dict[str, Any]) -> set[str]:
+    """한 page 가 원본으로 지목하는 경로들.
+
+    `raw_ref` 한 자리만 보지 않는다. page 를 손으로 쓴 에이전트가 그 자리를
+    비워 두는 일이 잦은데, 그러면 이미 넣은 소스가 영원히 '미처리' 로 남는다.
+    """
+    out = {norm_ref(page.get("raw_ref"))}
+    snapshot = page.get("source_snapshot")
+    if isinstance(snapshot, dict):
+        out.update(norm_ref(snapshot.get(key)) for key in ("raw_ref", "path", "source"))
+    for entry in page.get("history") or []:
+        if isinstance(entry, dict):
+            out.update(norm_ref(entry.get(key)) for key in ("note", "raw", "raw_ref", "source"))
+    for value in page.get("sources") or []:
+        out.add(norm_ref(value))
+    out.discard("")
+    return out
+
+
+def is_ingested(rel: str, refs: set[str]) -> bool:
+    """rel 은 'raw/…' 저장소 상대경로. 절대경로로 적힌 것도 같은 것으로 본다."""
+    if rel in refs:
+        return True
+    tail = "/" + rel
+    return any(ref.endswith(tail) for ref in refs)
+
+
 def wiki_raw_refs(root: Path) -> set[str]:
     """정본이 이미 가리키고 있는 raw 경로. 깨진 shard 는 건너뛴다."""
     refs: set[str] = set()
@@ -143,11 +209,8 @@ def wiki_raw_refs(root: Path) -> set[str]:
         except (OSError, json.JSONDecodeError):
             continue
         for page in value if isinstance(value, list) else [value]:
-            if not isinstance(page, dict):
-                continue
-            ref = page.get("raw_ref")
-            if isinstance(ref, str) and ref.strip():
-                refs.add(ref.strip().replace("\\", "/"))
+            if isinstance(page, dict):
+                refs.update(page_raw_refs(page))
     return refs
 
 
@@ -173,7 +236,10 @@ def raw_sources(root: Path) -> list[str]:
     patterns = ignore_patterns(root)
     out = []
     for path in sorted(raw.rglob("*")):
-        if not path.is_file() or path.name.startswith("."):
+        # 숨김 파일뿐 아니라 숨김 폴더 안의 것도 소스가 아니다. raw/.git 이나
+        # raw/.obsidian 을 세면 영원히 처리되지 않는 미처리가 계속 쌓인다.
+        if not path.is_file() or any(part.startswith(".")
+                                     for part in path.relative_to(raw).parts):
             continue
         rel = path.relative_to(root).as_posix()
         tail = path.relative_to(raw).as_posix()
@@ -186,7 +252,7 @@ def raw_sources(root: Path) -> list[str]:
 
 def pending_sources(root: Path) -> list[str]:
     refs = wiki_raw_refs(root)
-    return [rel for rel in raw_sources(root) if rel not in refs]
+    return [rel for rel in raw_sources(root) if not is_ingested(rel, refs)]
 
 
 # --------------------------------------------------------------------------- git
@@ -224,7 +290,9 @@ def pull_first(root: Path, remote: str, branch: str) -> tuple[bool, str]:
         return True, "git 저장소가 아니다 — pull·커밋 단계를 건너뛴다"
     # 더러운 워킹트리 검사가 remote 보다 먼저다. 사람이 편집하던 중이면
     # 에이전트를 그 위에 풀어놓지 않는다. status 자체가 실패하면 멈춘다.
-    code, out = git(root, "status", "--porcelain")
+    # 검사 범위는 루틴이 직접 쓰는 경로뿐이다. viewer/ 를 고치는 중이라고 해서
+    # 위키 ingest 까지 세울 이유는 없다 — 그렇게 하면 손대는 김에 루틴이 멈춘다.
+    code, out = git(root, "status", "--porcelain", "--", *COMMIT_PATHS)
     if code != 0:
         return False, f"git status 실패 — 상태를 알 수 없어 멈춘다: {out.splitlines()[-1] if out else code}"
     if out.strip():
@@ -299,12 +367,97 @@ def commit_and_push(root: Path, remote: str, branch: str,
     return True, f"{len(changed)}개 경로 커밋 후 {remote}/{branch} 로 push"
 
 
+def rebuild(root: Path) -> tuple[str, str]:
+    """파생물을 다시 만들고 검증한다. ('', 설명) 이면 통과."""
+    for stage in ("build", "validate"):
+        code, out = run([sys.executable, str(root / "scripts" / "llmwiki.py"), stage],
+                        cwd=root, timeout=600.0)
+        if code != 0:
+            return stage, f"{stage} 실패: {out[-200:]}"
+    return "", "build · validate 통과"
+
+
+def rebuild_or_repair(root: Path, agent: str, timeout: float,
+                      note: Any = None) -> tuple[str, str]:
+    """파생물을 만들고, 깨졌으면 에이전트에게 고치게 한 뒤 한 번 더 본다."""
+    stage, detail = rebuild(root)
+    if not stage:
+        return "", detail
+    order = [agent] + [a for a in AGENTS if a != agent]
+    for name in order:
+        if not agent_available(name):
+            continue
+        if note:
+            note("repair", f"{stage} 가 깨졌다 — {name} 에게 고치라고 되돌린다")
+        code, out = run(agent_argv(name, REPAIR_PROMPT.format(stage=stage, detail=detail)),
+                        cwd=root, timeout=timeout)
+        stage, detail = rebuild(root)
+        if not stage:
+            return "", f"{name} 가 고쳤다 — {detail}"
+        if code != 0:
+            continue  # 이 에이전트가 실패했다 — 다른 쪽으로 한 번 더
+        break
+    return stage, detail
+
+
+def run_agent(root: Path, agent: str, prompt: str, timeout: float,
+              note: Any = None) -> tuple[int, str, str]:
+    """고른 에이전트로 넣어 본다. 그쪽이 없거나 실패하면 다른 에이전트로 한 번 더.
+
+    넣는 것이 목적이지 특정 에이전트를 부르는 것이 목적이 아니다.
+    """
+    order = [agent] + [a for a in AGENTS if a != agent]
+    code, out, used = 127, f"쓸 수 있는 에이전트가 없다: {', '.join(order)}", agent
+    for name in order:
+        if not agent_available(name):
+            if note and name == agent:
+                note("agent", f"{name} 실행 파일이 없다 — 다른 에이전트를 찾는다")
+            continue
+        code, out = run(agent_argv(name, prompt), cwd=root, timeout=timeout)
+        used = name
+        if code == 0:
+            return code, out, used
+        if note:
+            note("agent", f"{name} 종료 코드 {code} — 다른 에이전트로 한 번 더 해 본다")
+    return code, out, used
+
+
+def finish_leftover(root: Path, remote: str, branch: str, *, agent: str = "claude",
+                    timeout: float = 3600.0, note: Any = None) -> tuple[bool, str]:
+    """지난 차례가 끊기며 남긴 변경을 먼저 마무리한다.
+
+    build 가 깨졌든 에이전트가 도중에 죽었든, 커밋되지 못한 변경이 남으면 그
+    다음 차례부터는 전부 '더러운 트리' 에서 멈춘다. 한 번의 실패가 루틴을 영영
+    세우고 미처리만 쌓이는 자리가 여기다. 직전에 에이전트를 불렀다는 표시가
+    있을 때만 — 즉 우리가 남긴 것이 분명할 때만 — 이어서 끝낸다. push 는 하지
+    않는다. pull 다음의 push-pending 이 순서를 지켜 민다.
+    """
+    if not is_git_repo(root):
+        return True, ""
+    dirty = changed_paths(root)
+    if not dirty:
+        clear_inflight(root)
+        return True, ""
+    if not read_inflight(root):
+        return True, ""  # 우리 것이 아니다 — 아래 더러운 트리 검사에 맡긴다
+    stage, detail = rebuild_or_repair(root, agent, timeout, note)
+    if stage:
+        return False, f"지난 차례가 남긴 {len(dirty)}개 경로를 끝내지 못했다 — {detail}"
+    ok, detail = commit_and_push(root, remote, branch, push=False)
+    if ok:
+        clear_inflight(root)
+    return ok, f"지난 차례가 남긴 {len(dirty)}개 경로 — {detail}"
+
+
 # --------------------------------------------------------------------------- 에이전트
 def agent_argv(agent: str, prompt: str) -> list[str]:
     if agent == "claude":
         return ["claude", "-p", prompt, "--permission-mode", "acceptEdits"]
     if agent == "codex":
-        return ["codex", "exec", "--skip-git-repo-check", prompt]
+        # 사용자 config 의 기본 sandbox 가 read-only 면 무인 ingest 는 한 줄도
+        # 쓰지 못한 채 매번 조용히 끝난다. 쓸 수 있는 범위를 명시한다.
+        return ["codex", "exec", "--skip-git-repo-check",
+                "--sandbox", "workspace-write", prompt]
     raise ValueError(f"unknown agent: {agent}")
 
 
@@ -313,12 +466,38 @@ def agent_available(agent: str) -> bool:
 
 
 # --------------------------------------------------------------------------- 잠금
-def acquire_lock() -> Path | None:
-    """겹쳐 도는 것을 막는다. 죽은 락은 시간이 지나면 스스로 풀린다."""
-    path = state_dir() / "routine.lock"
+def lock_file(root: Path) -> Path:
+    return state_dir() / f"routine-{root_key(root)}.lock"
+
+
+def lock_owner_alive(path: Path) -> bool:
+    """락을 쥔 프로세스가 아직 살아 있나. 확인할 수 없으면 살아 있다고 본다."""
+    if os.name != "posix":
+        # Windows 에서 os.kill(pid, 0) 은 확인이 아니라 종료다. 시간에 맡긴다.
+        return True
+    try:
+        pid = int(path.read_text(encoding="utf-8").strip() or 0)
+    except (OSError, ValueError):
+        return True
+    if pid <= 0 or pid == os.getpid():
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def acquire_lock(root: Path) -> Path | None:
+    """겹쳐 도는 것을 막는다. 주인이 죽은 락은 곧바로 회수한다."""
+    path = lock_file(root)
     try:
         state_dir().mkdir(parents=True, exist_ok=True)
-        if path.exists() and now() - path.stat().st_mtime > LOCK_STALE_SECONDS:
+        if path.exists() and (now() - path.stat().st_mtime > LOCK_STALE_SECONDS
+                              or not lock_owner_alive(path)):
+            # 재부팅·강제 종료로 주인이 사라진 락 하나가 여섯 시간을 잡아먹는다.
             path.unlink()
         handle = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
@@ -340,7 +519,7 @@ def do_run(root: Path, *, agent: str, remote: str, push: bool, dry_run: bool,
         report["steps"].append({"step": name, "ok": ok, "detail": detail})
         log(f"[{name}] {detail}")
 
-    lock = None if dry_run else acquire_lock()
+    lock = None if dry_run else acquire_lock(root)
     if not dry_run and lock is None:
         step("lock", "다른 루틴이 돌고 있다 — 이번 차례는 건너뛴다", ok=False)
         report["skipped"] = "locked"
@@ -353,6 +532,17 @@ def do_run(root: Path, *, agent: str, remote: str, push: bool, dry_run: bool,
             return report
         branch = branch or "main"
         report["branch"] = branch
+
+        # 0. 지난 차례가 끊기며 남긴 변경을 먼저 마무리한다. 그대로 두면 아래
+        # 더러운 트리 검사에 걸려, 한 번의 실패가 이후의 모든 차례를 세운다.
+        if not dry_run:
+            ok, detail = finish_leftover(root, remote, branch, agent=agent,
+                                         timeout=timeout, note=step)
+            if detail:
+                step("leftover", detail, ok=ok)
+            if not ok:
+                report["stopped"] = "leftover"
+                return report
 
         # 1. git pull 이 언제나 먼저다. 남의 최신 위에서 일해야 충돌이 쌓이지 않는다.
         if dry_run:
@@ -378,16 +568,18 @@ def do_run(root: Path, *, agent: str, remote: str, push: bool, dry_run: bool,
 
         pending = pending_sources(root)
         report["pending"] = pending
-        seen = read_seen()
+        record = read_seen(root)
+        verdict, why = ("go", "") if dry_run else seen_verdict(record, pending, now())
+        report["verdict"] = verdict
         if not pending:
             step("pending", "미처리 raw 소스 없음")
-        elif not dry_run and seen and set(pending) == set(seen):
-            # 지난번에 이미 넘겼는데 그대로 남아 있는 것들은 에이전트가 보고
-            # 판단한 결과다. 같은 목록으로 매시간 다시 깨우지 않는다.
-            step("pending", f"미처리 {len(pending)}건이 지난번과 같다 — 새 소스가 아니다")
+        elif verdict != "go":
+            # 판단이 끝난 목록은 매시간 다시 깨우지 않는다. 실패한 목록은
+            # 묻어 두지 않고 간격을 늘려 가며 다시 시도한다.
+            step("pending", f"미처리 {len(pending)}건 — {why}")
         else:
             step("pending", f"미처리 raw 소스 {len(pending)}건: " + ", ".join(pending[:5])
-                 + (" …" if len(pending) > 5 else ""))
+                 + (" …" if len(pending) > 5 else "") + (f" — {why}" if why else ""))
             tasks.append(("ingest", INGEST_PROMPT))
 
         if not tasks:
@@ -400,35 +592,39 @@ def do_run(root: Path, *, agent: str, remote: str, push: bool, dry_run: bool,
         if dry_run:
             step("agent", f"[dry-run] {agent} — " + ", ".join(n for n, _ in tasks))
             return report
-        if not agent_available(agent):
-            step("agent", f"{agent} 실행 파일이 없다", ok=False)
+        if not any(agent_available(name) for name in AGENTS):
+            step("agent", f"쓸 수 있는 에이전트가 없다: {', '.join(AGENTS)}", ok=False)
             report["stopped"] = "agent-missing"
             return report
-        code, out = run(agent_argv(agent, prompt), cwd=root, timeout=timeout)
+        # 이 표시 뒤에 생긴 변경은 우리 것이다. 중간에 죽어도 다음 차례가
+        # 그걸 알아보고 이어서 끝낸다.
+        mark_inflight(root, branch)
+        code, out, used = run_agent(root, agent, prompt, timeout, step)
+        report["agent_used"] = used
         tail = out.strip().splitlines()[-1] if out.strip() else ""
-        step("agent", f"{agent} 종료 코드 {code}" + (f" — {tail[:200]}" if tail else ""),
+        step("agent", f"{used} 종료 코드 {code}" + (f" — {tail[:200]}" if tail else ""),
              ok=code == 0)
         if any(name == "ingest" for name, _ in tasks):
-            # 성공이든 실패든 이 목록으로는 한 번 깨웠다. 에이전트가 "이건 못
-            # 넣겠다" 고 판단한 것일 수도 있어 재시도는 값이 없다.
-            write_seen(pending_sources(root))
+            # 끝까지 돌고도 남은 것은 에이전트의 판단이니 다시 묻지 않는다.
+            # 실패는 판단이 아니다 — 타임아웃·인증 오류 한 번이 그 소스들을
+            # 영영 묻지 않도록 시도 횟수를 세어 두고 나중에 다시 부른다.
+            # 남은 것은 남은 것이다 — 실패였는지 에이전트의 판단이었는지로
+            # 갈라 묻어 두지 않는다. 같은 목록이 계속 남으면 간격만 늘린다.
+            left = pending_sources(root)
+            same = set(left) == set(record.get("pending") or [])
+            write_seen(root, left, outcome="failed" if code else "done",
+                       attempts=(as_int(record.get("attempts")) + 1) if same else 1)
         if code != 0:
             report["stopped"] = "agent-failed"
             return report
         report["ingested"] = True
 
-        # 4. 파생물을 다시 만들고 검증한다. 깨졌으면 커밋하지 않는다.
-        code, out = run([sys.executable, str(root / "scripts" / "llmwiki.py"), "build"],
-                        cwd=root, timeout=600.0)
-        step("build", "완료" if code == 0 else f"실패: {out[-200:]}", ok=code == 0)
-        if code != 0:
-            report["stopped"] = "build"
-            return report
-        code, out = run([sys.executable, str(root / "scripts" / "llmwiki.py"), "validate"],
-                        cwd=root, timeout=600.0)
-        step("validate", "통과" if code == 0 else f"실패: {out[-200:]}", ok=code == 0)
-        if code != 0:
-            report["stopped"] = "validate"
+        # 4. 파생물을 다시 만들고 검증한다. 깨졌으면 커밋하는 대신 에이전트에게
+        # 되돌려 고치게 한다 — 깨진 채로 멈추면 그 소스는 영영 못 들어간다.
+        stage, detail = rebuild_or_repair(root, agent, timeout, step)
+        step("build", detail, ok=not stage)
+        if stage:
+            report["stopped"] = stage
             return report
 
         # 5. 실제로 바뀐 것이 있을 때만 커밋하고 밀어 올린다.
@@ -436,6 +632,8 @@ def do_run(root: Path, *, agent: str, remote: str, push: bool, dry_run: bool,
         step("commit", detail, ok=ok)
         if not ok:
             report["stopped"] = "commit"
+            return report
+        clear_inflight(root)
         return report
     finally:
         if lock is not None:
@@ -446,6 +644,8 @@ def do_run(root: Path, *, agent: str, remote: str, push: bool, dry_run: bool,
 
 
 # --------------------------------------------------------------------------- 스케줄러
+# 주기는 에이전트 자신의 주기 작업으로만 건다. OS 스케줄러(launchd · cron ·
+# schtasks)는 두지 않는다 — 부르는 자리가 둘이면 무엇이 돌았는지도 둘로 갈린다.
 def hook_python() -> str:
     return sys.executable or "python3"
 
@@ -459,166 +659,119 @@ def routine_command(root: Path, agent: str, *, python: str | None = None,
     return argv
 
 
-def plist_path() -> Path:
-    return Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+def agent_task_dir(agent: str) -> Path | None:
+    """에이전트가 자기 주기 작업을 두는 자리. 실제로 있을 때만 인정한다."""
+    rel = AGENT_TASK_DIRS.get(agent)
+    home = Path(os.environ.get(ENV_TASK_HOME) or Path.home())
+    path = (home / rel) if rel else None
+    return path if path and path.is_dir() else None
 
 
-def plist_body(argv: list[str], interval: int) -> str:
-    # 경로에 & 나 < 가 있으면 escape 없이는 잘못된 plist 가 만들어진다.
-    args = "\n".join(f"        <string>{xml_escape(a)}</string>" for a in argv)
-    out = xml_escape(str(log_file()))
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
-        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
-        '<plist version="1.0">\n'
-        '<dict>\n'
-        f'    <key>Label</key><string>{xml_escape(LABEL)}</string>\n'
-        '    <key>ProgramArguments</key>\n'
-        f'    <array>\n{args}\n    </array>\n'
-        f'    <key>StartInterval</key><integer>{interval}</integer>\n'
-        '    <key>RunAtLoad</key><false/>\n'
-        f'    <key>StandardOutPath</key><string>{out}</string>\n'
-        f'    <key>StandardErrorPath</key><string>{out}</string>\n'
-        '</dict>\n'
-        '</plist>\n'
-    )
+def task_file(agent: str) -> Path | None:
+    base = agent_task_dir(agent)
+    return base / TASK_NAME / "SKILL.md" if base else None
 
 
-CRON_MARKER = "# llmwiki-routine"
-
-
-def cron_spec(interval: int) -> str:
-    """초 단위 주기를 crontab 표현으로.
-
-    `*/N` 은 한 자리(분·시) 안에서만 도는 표현이라, N 이 그 자리의 약수가 아니면
-    하루 경계에서 간격이 어긋난다. 그래서 분은 60, 시는 24 의 약수로만 내린다.
-    하루를 넘는 주기는 crontab 으로 정확히 못 적으므로 매일 자정으로 둔다.
-    """
-    minutes = max(1, interval // 60)
-    if minutes < 60:
-        return f"*/{max((d for d in (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30) if d <= minutes), default=1)} * * * *"
-    if minutes == 60:
-        return "@hourly"
-    hours = minutes // 60
-    if hours >= 24:
-        return "0 0 * * *"
-    return f"0 */{max((d for d in (1, 2, 3, 4, 6, 8, 12) if d <= hours), default=1)} * * *"
-
-
-def crontab_read() -> tuple[bool, str]:
-    """(읽을 수 있었나, 내용). 읽기 실패를 '빈 crontab' 으로 읽으면 남의 줄을 날린다."""
-    # 메시지를 문자열로 판정하므로 로케일을 고정한다 — 한국어 환경에서
-    # "no crontab" 이 안 나오면 신규 등록이 통째로 막힌다.
-    env = {"LC_ALL": "C", "LANG": "C"}
-    code, out = run(["crontab", "-l"], timeout=15.0, env=env)
-    if code == 0:
-        return True, out
-    # crontab 이 아직 없는 것은 오류가 아니다. 그 외 실패는 손대지 않는다.
-    if "no crontab" in out.lower() or not out.strip():
-        return True, ""
-    return False, ""
-
-
-def crontab_write(text: str) -> tuple[int, str]:
-    try:
-        proc = subprocess.run(["crontab", "-"], input=text, capture_output=True,
-                              text=True, timeout=15.0)
-    except (OSError, subprocess.SubprocessError) as exc:  # noqa: BLE001
-        return 1, str(exc)
-    return proc.returncode, (proc.stdout + proc.stderr).strip()
-
-
-def cron_lines(existing: str) -> list[str]:
-    return [ln for ln in existing.splitlines() if CRON_MARKER not in ln]
-
-
-def scheduler_kind() -> str:
-    system = platform.system()
-    if system == "Darwin":
-        return "launchd"
-    if system == "Windows":
-        return "schtasks"
-    return "cron"
-
-
-def ours_launchd(path: Path) -> bool:
-    """이 plist 가 우리가 쓴 것인가. 라벨이 같아도 남의 것이면 손대지 않는다."""
+def ours_task(path: Path) -> bool:
+    """이 작업이 우리가 쓴 것인가. 사람이 손으로 쓴 같은 이름은 손대지 않는다."""
     try:
         body = path.read_text(encoding="utf-8")
     except OSError:
         return False
-    # plist 안의 값은 escape 되어 있다. 검사도 같은 형태로 해야 자기 것을
-    # 남의 것으로 오판하지 않는다.
-    return xml_escape(LABEL) in body and xml_escape(str(Path(__file__).resolve())) in body
+    return TASK_MARKER in body and str(Path(__file__).resolve()) in body
 
 
-def ours_schtask() -> bool:
-    code, out = run(["schtasks", "/Query", "/TN", LABEL, "/FO", "LIST", "/V"], timeout=30.0)
-    if code != 0:
-        return False
-    return str(Path(__file__).resolve()) in out
+def task_body(root: Path, argv: list[str], interval: int) -> str:
+    """에이전트가 읽을 작업 정의. 판단은 루틴이 하고, 여기서는 부르기만 한다."""
+    command = " ".join(shlex.quote(a) for a in argv)
+    return (
+        "---\n"
+        f"name: {TASK_NAME}\n"
+        "description: raw/ 의 새 소스를 JSON 위키에 통합하는 주기 루틴. "
+        "새 소스가 없으면 아무것도 하지 않는다\n"
+        "---\n\n"
+        f"{TASK_MARKER}\n"
+        f"<!-- 저장소: {root} · 주기: {interval}초 · "
+        "이 파일은 llmwiki_routine.py install 이 쓴다 -->\n\n"
+        "# 주기 ingest\n\n"
+        "이 작업은 스스로 판단하지 않는다. 아래 한 줄을 실행하고 그 보고만 읽는다.\n"
+        "루틴이 이월분 정리 · git pull · 미처리 판정 · ingest · build · validate ·\n"
+        "커밋 · push 를 순서대로 하고, 어긋나면 그 자리에서 멈춘다.\n\n"
+        f"    {command} --json\n\n"
+        "- `\"skipped\": \"nothing-to-do\"` 는 정상이다. 새 소스가 없으면 아무것도\n"
+        "  하지 않고 끝나는 것이 이 루틴의 정상 동작이다. 억지로 page 를 만들지 마라.\n"
+        "- `\"stopped\"` 가 있으면 그 단계의 `detail` 을 그대로 사람에게 보고해라.\n"
+        "  특히 `leftover` · `pull` 은 사람이 손봐야 풀리는 자리다.\n"
+        "- raw/ 는 수정하지 마라. 이 파일도 고치지 마라 — install 이 다시 쓴다.\n"
+    )
+
+
+def install_agent_task(root: Path, agent: str, argv: list[str],
+                       interval: int) -> dict[str, Any]:
+    path = task_file(agent)
+    if path is None:
+        base = Path.home() / AGENT_TASK_DIRS.get(agent, Path(""))
+        return {"ok": False,
+                "detail": f"{agent} 에는 주기 작업 자리가 없다 ({base}) — 다른 데 걸지 않는다"}
+    if path.exists() and not ours_task(path):
+        # 사람이 직접 쓴 같은 이름의 작업이 있다. MCP 등록과 같은 규율이다.
+        return {"file": str(path), "ok": False,
+                "detail": f"{path} 는 우리가 만든 것이 아니다 — 그대로 둔다"}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(task_body(root, argv, interval), encoding="utf-8")
+    except OSError as exc:  # noqa: BLE001
+        return {"file": str(path), "ok": False, "detail": f"작업을 쓰지 못했다: {exc}"}
+    return {"file": str(path), "ok": True, "detail": f"{agent} 자체 루틴에 등록: {path}"}
+
+
+def uninstall_agent_task(agent: str) -> dict[str, Any]:
+    path = task_file(agent)
+    if path is None or not path.exists():
+        return {"ok": True, "detail": f"{agent} 자체 루틴에 우리 작업이 없다"}
+    if not ours_task(path):
+        return {"ok": True, "detail": f"{path} 가 우리 것이 아니게 바뀌었다 — 그대로 둔다"}
+    try:
+        path.unlink()
+        # 우리가 만든 빈 폴더만 치운다. 다른 파일이 있으면 그대로 둔다.
+        if next(path.parent.iterdir(), None) is None:
+            path.parent.rmdir()
+    except OSError as exc:  # noqa: BLE001
+        return {"ok": False, "detail": f"작업을 지우지 못했다: {exc}"}
+    return {"ok": True, "detail": f"제거됨: {path}"}
+
+
+def scheduler_kind(agent: str | None = None) -> str:
+    """주기를 걸 자리. 에이전트 자신의 주기 작업뿐이다."""
+    if agent and agent_task_dir(agent):
+        return f"{agent}-task"
+    return ""
 
 
 def install_schedule(root: Path, agent: str, *, interval: int, python: str | None,
                      remote: str, push: bool, dry_run: bool) -> dict[str, Any]:
+    """에이전트 자신의 주기 작업으로 등록한다.
+
+    그 자리에서 부르면 인증·모델·권한이 이미 갖춰진 채로 돌고, 무엇이 왜
+    멈췄는지도 그 에이전트가 그대로 읽는다.
+    """
     argv = routine_command(root, agent, python=python, remote=remote, push=push)
-    kind = scheduler_kind()
-    plan = {"scheduler": kind, "interval": interval, "command": argv}
+    plan: dict[str, Any] = {"scheduler": f"{agent}-task", "interval": interval,
+                            "command": argv}
     if dry_run:
         plan["dry_run"] = True
         return plan
-
-    if kind == "launchd":
-        path = plist_path()
-        # 같은 라벨의 남의 항목은 덮어쓰지 않는다 — MCP 등록과 같은 규율이다.
-        if path.exists() and not ours_launchd(path):
-            plan.update(file=str(path), ok=False,
-                        detail=f"{path} 는 우리가 만든 것이 아니다 — 그대로 둔다")
-            return plan
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
-            # 도는 것을 내리지 못한 채 plist 를 갈아치우면 옛 명령이 계속 돈다.
-            code, out = run(["launchctl", "unload", str(path)], timeout=30.0)
-            if code != 0:
-                plan.update(file=str(path), ok=False,
-                            detail=f"기존 항목을 내리지 못했다 — 그대로 둔다: {out or code}")
-                return plan
-        path.write_text(plist_body(argv, interval), encoding="utf-8")
-        code, out = run(["launchctl", "load", str(path)], timeout=30.0)
-        if code != 0:
-            # load 실패면 등록되지 않은 plist 만 남는다. 흔적을 남기지 않는다.
-            path.unlink(missing_ok=True)
-            plan.update(file=str(path), ok=False, detail=f"launchctl load 실패: {out or code}")
-            return plan
-        plan.update(file=str(path), ok=True, detail=out or "load 완료")
-    elif kind == "cron":
-        spec = cron_spec(interval)
-        readable, current = crontab_read()
-        if not readable:
-            plan.update(ok=False, detail="crontab 을 읽을 수 없다 — 덮어쓰지 않는다")
-            return plan
-        line = f"{spec} {' '.join(shlex.quote(a) for a in argv)} {CRON_MARKER}"
-        text = "\n".join([*cron_lines(current), line]).strip() + "\n"
-        code, out = crontab_write(text)
-        plan.update(ok=code == 0, detail=out or f"crontab 등록: {spec}")
-    else:
-        existing = run(["schtasks", "/Query", "/TN", LABEL], timeout=30.0)[0] == 0
-        if existing and not ours_schtask():
-            plan.update(ok=False, detail=f"작업 '{LABEL}' 은 우리가 만든 것이 아니다 — 그대로 둔다")
-            return plan
-        code, out = run(["schtasks", "/Create", "/F", "/TN", LABEL, "/SC", "MINUTE",
-                         "/MO", str(max(1, interval // 60)), "/TR",
-                         " ".join(f'"{a}"' for a in argv)], timeout=30.0)
-        plan.update(ok=code == 0, detail=out or "schtasks 등록")
-
+    plan.update(install_agent_task(root, agent, argv, interval))
     if plan.get("ok"):
-        record_state(root, agent, interval=interval, remote=remote, push=push, kind=kind)
+        record_state(root, agent, interval=interval, remote=remote, push=push,
+                     kind=f"{agent}-task")
     return plan
 
 
 def uninstall_schedule(*, dry_run: bool) -> dict[str, Any]:
-    kind = scheduler_kind()
+    # 무엇을 지울지는 등록할 때 적어 둔 것을 따른다.
+    state = read_state()
+    kind = str(state.get("scheduler") or "")
     plan: dict[str, Any] = {"scheduler": kind}
     if dry_run:
         plan["dry_run"] = True
@@ -626,44 +779,8 @@ def uninstall_schedule(*, dry_run: bool) -> dict[str, Any]:
     if not state_file().exists():
         plan.update(ok=True, detail="우리가 등록한 기록이 없다 — 아무것도 지우지 않는다")
         return plan
-    if kind == "launchd":
-        path = plist_path()
-        if not path.exists():
-            plan.update(ok=True, detail=f"이미 없음: {path}")
-        elif not ours_launchd(path):
-            # 설치 후 누군가 같은 라벨로 갈아치웠다. 남의 것을 지우지 않는다.
-            plan.update(ok=True, detail=f"{path} 가 우리 것이 아니게 바뀌었다 — 그대로 둔다")
-            forget_state()
-            return plan
-        else:
-            code, out = run(["launchctl", "unload", str(path)], timeout=30.0)
-            if code != 0:
-                # 내리지도 못했는데 plist 를 지우면, 도는 작업이 주인 없이 남는다.
-                plan.update(ok=False,
-                            detail=f"launchctl unload 실패 — 그대로 둔다: {out or code}")
-                return plan
-            path.unlink()
-            plan.update(ok=True, detail=f"제거됨: {path}")
-    elif kind == "cron":
-        readable, current = crontab_read()
-        if not readable:
-            # crontab 을 읽지 못한 채로 쓰면 남의 줄까지 날린다.
-            plan.update(ok=False, detail="crontab 을 읽을 수 없다 — 아무것도 지우지 않는다")
-            return plan
-        kept = cron_lines(current)
-        if len(kept) == len(current.splitlines()):
-            plan.update(ok=True, detail="crontab 에 우리 줄이 없다")
-        else:
-            code, out = crontab_write("\n".join(kept).strip() + ("\n" if kept else ""))
-            plan.update(ok=code == 0, detail=out or "crontab 항목 제거")
-    else:
-        if not ours_schtask():
-            plan.update(ok=True, detail=f"작업 '{LABEL}' 이 우리 것이 아니다 — 그대로 둔다")
-            forget_state()
-            return plan
-        code, out = run(["schtasks", "/Delete", "/F", "/TN", LABEL], timeout=30.0)
-        plan.update(ok=code == 0, detail=out or "schtasks 항목 제거")
-    # 지우지 못했으면 소유권 기록을 남긴다 — 다음 uninstall 이 다시 시도해야 한다.
+    plan.update(uninstall_agent_task(kind[: -len("-task")] if kind.endswith("-task")
+                                     else str(state.get("agent") or "claude")))
     if plan.get("ok"):
         forget_state()
     return plan
@@ -685,25 +802,146 @@ def forget_state() -> None:
         pass
 
 
-def seen_file() -> Path:
+def root_key(root: Path) -> str:
+    """상태를 저장소별로 가른다. 두 clone 이 한 파일을 두고 다투지 않게."""
+    return hashlib.sha1(str(Path(root).resolve()).encode("utf-8")).hexdigest()[:10]
+
+
+def seen_file(root: Path) -> Path:
+    return state_dir() / f"routine-seen-{root_key(root)}.json"
+
+
+def legacy_seen_file() -> Path:
     return state_dir() / "routine-seen.json"
 
 
-def read_seen() -> list[str]:
+def as_int(value: Any) -> int:
     try:
-        value = json.loads(seen_file().read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    return [str(x) for x in value] if isinstance(value, list) else []
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
-def write_seen(pending: Iterable[str]) -> None:
+def as_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def read_seen(root: Path) -> dict[str, Any]:
+    """지난번에 에이전트에게 넘긴 목록과 그 결과."""
+    for path in (seen_file(root), legacy_seen_file()):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(value, list):  # 옛 형식 — 목록만 적었다
+            return {"pending": [str(x) for x in value], "outcome": "done",
+                    "attempts": 0, "at": 0.0}
+        if isinstance(value, dict):
+            return {"pending": [str(x) for x in value.get("pending") or []],
+                    "outcome": "failed" if value.get("outcome") == "failed" else "done",
+                    "attempts": as_int(value.get("attempts")),
+                    "at": as_float(value.get("at"))}
+    return {}
+
+
+def write_seen(root: Path, pending: Iterable[str], *, outcome: str = "done",
+               attempts: int = 0) -> None:
     try:
         state_dir().mkdir(parents=True, exist_ok=True)
-        seen_file().write_text(json.dumps(sorted(pending), ensure_ascii=False, indent=2) + "\n",
-                               encoding="utf-8")
+        seen_file(root).write_text(json.dumps(
+            {"pending": sorted(pending), "outcome": outcome, "attempts": attempts,
+             "at": now(), "written": stamp()}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
     except OSError:
         pass
+
+
+def retry_delay(attempts: int) -> float:
+    """실패가 이어질수록 뜸하게, 그러나 언젠가는 반드시 다시 시도한다."""
+    return min(RETRY_BASE_SECONDS * (2 ** max(0, attempts - 1)), RETRY_MAX_SECONDS)
+
+
+def seen_verdict(record: dict[str, Any], pending: list[str],
+                 moment: float) -> tuple[str, str]:
+    """이번 목록으로 에이전트를 깨울까. ('go'|'waiting', 설명).
+
+    안 들어간 소스를 영영 접는 자리는 없다. 실패였든 에이전트가 건너뛴
+    판단이었든, 남아 있는 한 간격을 늘려 가며(최대 하루) 계속 다시 넣어 본다.
+    """
+    if not record or set(pending) != set(record.get("pending") or []):
+        return "go", ""  # 목록이 달라졌다 — 새 소스다
+    attempts = as_int(record.get("attempts"))
+    delay = retry_delay(attempts)
+    waited = moment - as_float(record.get("at"))
+    if waited < delay:
+        return "waiting", (f"{attempts}번 시도했다 — {int((delay - waited) // 60)}분 뒤에 "
+                           "다시 넣어 본다")
+    return "go", f"아직 안 들어간 목록을 다시 넣는다 ({attempts + 1}번째)"
+
+
+def inflight_file(root: Path) -> Path:
+    return state_dir() / f"routine-inflight-{root_key(root)}.json"
+
+
+def mark_inflight(root: Path, branch: str) -> None:
+    """에이전트를 부르기 직전에 남기는 표시. 이 뒤에 생긴 변경은 우리 것이다."""
+    try:
+        state_dir().mkdir(parents=True, exist_ok=True)
+        inflight_file(root).write_text(json.dumps(
+            {"at": stamp(), "branch": branch, "pid": os.getpid()},
+            ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def read_inflight(root: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(inflight_file(root).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def clear_inflight(root: Path) -> None:
+    try:
+        inflight_file(root).unlink()
+    except OSError:
+        pass
+
+
+def last_run_at() -> float | None:
+    """마지막으로 루틴이 실제로 돈 시각. 로그가 없으면 None."""
+    try:
+        lines = log_file().read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        head = line.split(" ", 1)[0]
+        try:
+            return time.mktime(time.strptime(head, "%Y-%m-%dT%H:%M:%S"))
+        except ValueError:
+            continue
+    return None
+
+
+def firing_check(interval: int) -> tuple[bool, str]:
+    """스케줄러가 실제로 부르고 있나. 조용히 안 도는 것이 제일 위험하다.
+
+    에이전트 자체 루틴은 그 에이전트가 깨어 있을 때만 도는 경우가 있어, 걸어
+    두었다는 사실만으로는 돌고 있다고 말할 수 없다. 그래서 등록 상태가 아니라
+    마지막 실행 시각으로 판정한다.
+    """
+    at = last_run_at()
+    if at is None:
+        return False, "실행 기록이 없다 — 아직 한 번도 돌지 않았다"
+    idle = now() - at
+    if idle > max(2 * interval, 2 * DEFAULT_INTERVAL):
+        return False, (f"마지막 실행이 {int(idle // 3600)}시간 전이다 — 에이전트 주기 "
+                       "작업이 부르지 않고 있다. 그 에이전트에서 작업이 살아 있는지 봐라")
+    return True, f"마지막 실행 {int(idle // 60)}분 전"
 
 
 def read_state() -> dict[str, Any]:
@@ -842,15 +1080,32 @@ def main(argv: list[str] | None = None) -> int:
             tail = log_file().read_text(encoding="utf-8").splitlines()[-1]
         except (OSError, IndexError):
             pass
+        pending = pending_sources(root)
+        record = read_seen(root)
+        verdict, why = seen_verdict(record, pending, now()) if pending else ("go", "")
+        firing, firing_why = firing_check(as_int(state.get("interval")) or DEFAULT_INTERVAL)
         print(json.dumps({
-            "installed": bool(state), "scheduler": state.get("scheduler", scheduler_kind()),
+            "installed": bool(state),
+            "scheduler": state.get("scheduler") or scheduler_kind(state.get("agent")),
             "state_file": str(state_file()), "log": str(log_file()),
-            "last_log_line": tail, "pending": len(pending_sources(root)), **state,
+            "last_log_line": tail, "pending": len(pending),
+            # 막혀 있으면 여기서 보인다. 조용히 쌓이게 두지 않는다.
+            "verdict": verdict, "verdict_detail": why,
+            "firing": firing, "firing_detail": firing_why,
+            # 어느 에이전트가 자기 자리를 갖고 있는지. 빈 값이면 OS 폴백뿐이다.
+            "agent_routines": {a: str(agent_task_dir(a) or "") for a in AGENTS},
+            "attempts": as_int(record.get("attempts")),
+            "seen_file": str(seen_file(root)),
+            "leftover": read_inflight(root) or None, **state,
         }, ensure_ascii=False, indent=2))
-        return 0
+        # 걸어 뒀는데 돌지 않는 것은 성공이 아니다. 스크립트가 알아채게 한다.
+        return 0 if (not state or firing) else 1
 
     if args.command == "pending":
-        print(json.dumps({"root": str(root), "pending": pending_sources(root)},
+        pending = pending_sources(root)
+        verdict, why = seen_verdict(read_seen(root), pending, now()) if pending else ("go", "")
+        print(json.dumps({"root": str(root), "pending": pending,
+                          "verdict": verdict, "verdict_detail": why},
                          ensure_ascii=False, indent=2))
         return 0
 

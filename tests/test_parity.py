@@ -10,6 +10,7 @@ import json
 import shutil
 import subprocess
 import sys
+import unicodedata
 import unittest
 from pathlib import Path
 
@@ -99,6 +100,22 @@ class SweepTest(unittest.TestCase):
         report = json.loads(proc.stdout)
         self.assertEqual(report["floats"]["mismatched"], 0, report["floats"]["examples"])
         self.assertEqual(report["casefold"]["mismatched"], 0, report["casefold"]["examples"])
+        self.assertIsNone(
+            report["casefold"]["unknownUnicode"],
+            f"casefold.ts 에 Unicode {unicodedata.unidata_version} 판본 차이를 등록해라",
+        )
+        expected_skew = {
+            "13.0.0": 40,
+            "14.0.0": 0,
+            "15.0.0": 0,
+            "15.1.0": 0,
+            "16.0.0": 27,
+        }
+        self.assertEqual(
+            report["casefold"]["versionSkew"],
+            expected_skew[unicodedata.unidata_version],
+            "알려진 Unicode 판본 차이 목록이 바뀌었다",
+        )
         self.assertGreater(report["floats"]["checked"], 5000)
         self.assertGreater(report["casefold"]["checked"], 1_000_000)
         self.assertEqual(proc.returncode, 0)

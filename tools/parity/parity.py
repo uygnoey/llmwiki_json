@@ -157,7 +157,13 @@ def sweep(args: argparse.Namespace) -> int:
             print(f"  {label:<10} 불일치 {section['mismatched']}/{section['checked']}")
             for example in section["examples"]:
                 print(f"    ≠ {example}")
-    return 1 if any(report[key]["mismatched"] for key in ("floats", "casefold")) else 0
+        fold = report["casefold"]
+        print(f"  Unicode    Python {fold['unicode']} / 고정표 {fold['tableUnicode']}"
+              f" / 알려진 판본차 {fold['versionSkew']}")
+        if fold["unknownUnicode"]:
+            print(f"    ! 미등록 Unicode 판본: {fold['unknownUnicode']}")
+    failed = any(report[key]["mismatched"] for key in ("floats", "casefold"))
+    return 1 if failed or report["casefold"]["unknownUnicode"] else 0
 
 
 def fingerprint(root: Path) -> dict[str, str]:

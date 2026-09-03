@@ -19,6 +19,7 @@ import json
 import math
 import random
 import sys
+import unicodedata
 from typing import Any
 
 SEED = 20260826
@@ -67,7 +68,8 @@ def main() -> None:
         "seed": SEED,
         "floats": {"count": len(floats), "values": floats,
                    "answers": [json.dumps(value) for value in floats]},
-        "casefold": {"scalars": 0x110000 - 0x800, "changed": folded},
+        "casefold": {"unicode": unicodedata.unidata_version,
+                     "scalars": 0x110000 - 0x800, "changed": folded},
     }
     sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
 

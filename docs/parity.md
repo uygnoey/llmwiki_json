@@ -82,4 +82,11 @@ cold build 를 돌려 증분 발행본(`index/search.sqlite` 포함)의 바이�
 곳이다. 둘 다 있어야 한다. 새 완화책을 넣을 때는 corpus case 만 늘리지 말고
 sweep 표본이 그 구간을 덮는지도 확인해라.
 
+casefold 전수 대조는 Python 런타임의 `unicodedata.unidata_version`도 함께
+기록한다. TypeScript 참조표는 Unicode 15.0에 고정돼 있으므로 Python 3.9의
+Unicode 13.0과 Python 3.14의 Unicode 16.0에서는 각각 알려진 판본 차이가 난다.
+이 점들은 `casefold.ts`의 판본별 목록으로 따로 세고 실제 구현 불일치에는 넣지
+않는다. 등록되지 않은 Unicode 판본은 성공으로 넘기지 않는다. 새 Python 판본을
+지원할 때는 전수 결과를 확인한 뒤 그 목록과 기대 개수를 함께 갱신해야 한다.
+
 손으로 고른 시험은 자기가 생각한 것만 시험한다.

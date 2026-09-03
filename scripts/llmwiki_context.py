@@ -1368,6 +1368,11 @@ CLIENT_FILES = {
 CLIENTS = tuple(CLIENT_FILES)
 # Codex 는 신뢰한 hook 의 지문을 config.toml 의 [hooks.state] 에 남긴다.
 CODEX_CONFIG = ".codex/config.toml"
+# 2026-09-02 이전에 검색에 쓰던 qmd 를 MCP 서버로 등록해 둔 기계가 있다. 그 collection 은
+# 이제 없으니 조회해도 빈손이다. 우리가 등록한 것이 아니므로 떼지 않고, 어디에 남았는지와
+# 떼는 명령만 verify/doctor 가 알려 준다.
+LEGACY_QMD_MCP = "qmd"
+CLAUDE_MCP_CONFIG = ".claude.json"
 CODEX_TRUST_EVENT = "user_prompt_submit"
 CODEX_STALE_TRUST = "codex-trust-stale"
 
@@ -1396,6 +1401,51 @@ def home() -> Path:
 def client_paths(name: str) -> tuple[Path, Path]:
     hooks, guide = CLIENT_FILES[name]
     return home() / hooks, home() / guide
+
+
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    except (OSError, ValueError):
+        return None
+
+
+def legacy_qmd_mcp(root: Path) -> list[dict[str, str]]:
+    """옛 qmd MCP 서버 등록이 남아 있는 자리를 찾는다. 고치지 않는다.
+
+    Claude Code 는 user scope 등록을 `~/.claude.json` 의 `mcpServers` 에, local scope 를 같은
+    파일의 `projects[<cwd>].mcpServers` 에, project scope 를 저장소의 `.mcp.json` 에 둔다.
+    Codex 는 `~/.codex/config.toml` 의 `[mcp_servers.<이름>]` 표다.
+    """
+    name = LEGACY_QMD_MCP
+    found: list[dict[str, str]] = []
+
+    def has_qmd(obj: Any) -> bool:
+        return isinstance(obj, dict) and name in (obj.get("mcpServers") or {})
+
+    claude_cfg = home() / CLAUDE_MCP_CONFIG
+    data = _read_json(claude_cfg)
+    if has_qmd(data):
+        found.append({"client": "claude", "where": str(claude_cfg),
+                      "remove": f"claude mcp remove --scope user {name}"})
+    projects = data.get("projects") if isinstance(data, dict) else None
+    for cwd, proj in sorted((projects or {}).items()):
+        if has_qmd(proj):
+            found.append({"client": "claude", "where": f"{claude_cfg} projects[{cwd}]",
+                          "remove": f"cd {shlex.quote(str(cwd))} && claude mcp remove --scope local {name}"})
+    project_cfg = root / ".mcp.json"
+    if has_qmd(_read_json(project_cfg)):
+        found.append({"client": "claude", "where": str(project_cfg),
+                      "remove": f"cd {shlex.quote(str(root))} && claude mcp remove --scope project {name}"})
+    codex_cfg = home() / CODEX_CONFIG
+    try:
+        toml = codex_cfg.read_text(encoding="utf-8") if codex_cfg.is_file() else ""
+    except OSError:
+        toml = ""
+    if re.search(rf'^\s*\[mcp_servers\.(?:"{name}"|{name})\]\s*$', toml, re.M):
+        found.append({"client": "codex", "where": str(codex_cfg),
+                      "remove": f"codex mcp remove {name}"})
+    return found
 
 
 def hook_python() -> str:
@@ -1711,8 +1761,11 @@ def verify(root: Path, *, clients: Iterable[str] = CLIENTS,
     """설치 상태를 사실대로 보고한다. 고치지 않는다."""
     checks: list[dict[str, Any]] = []
 
-    def check(name: str, ok: bool, detail: Any = "") -> None:
-        checks.append({"check": name, "ok": bool(ok), "detail": detail})
+    def check(name: str, ok: bool, detail: Any = "", *, warn: bool = False) -> None:
+        item: dict[str, Any] = {"check": name, "ok": bool(ok), "detail": detail}
+        if warn:  # 통과는 하지만 사용자가 손봐야 할 것이 있다
+            item["warn"] = True
+        checks.append(item)
 
     interpreter = python or hook_python()
     check("python", os.access(interpreter, os.X_OK), interpreter)
@@ -1796,6 +1849,14 @@ def verify(root: Path, *, clients: Iterable[str] = CLIENTS,
 
     broken, _ = run_hook(root, "not json at all", max_bytes=MAX_BYTES, max_tokens=MAX_TOKENS)
     check("fail-open", broken == "", "malformed stdin 은 조용히 통과한다")
+
+    # 옛 qmd MCP 등록은 우리가 만든 것이 아니라 떼지 않는다 — 있으면 warn 으로 떼는 명령을 알려 준다.
+    legacy = legacy_qmd_mcp(root)
+    check("legacy-qmd-mcp", True,
+          "없음" if not legacy else
+          "옛 qmd MCP 등록이 남아 있다 (collection 이 없어 빈손으로 답한다). 떼려면: "
+          + " ; ".join(f"{e['remove']}  [{e['where']}]" for e in legacy),
+          warn=bool(legacy))
 
     return {"ok": all(c["ok"] for c in checks), "root": str(root),
             "python": interpreter, "command": expected, "checks": checks}
@@ -1931,7 +1992,7 @@ def run(argv: list[str] | None = None) -> int:
                 print(json.dumps(report, ensure_ascii=False, indent=2))
             else:
                 for item in report["checks"]:
-                    mark = "ok  " if item["ok"] else "FAIL"
+                    mark = "warn" if item.get("warn") else ("ok  " if item["ok"] else "FAIL")
                     print(f"{mark} {item['check']}: {item['detail']}")
                 print("모든 점검 통과" if report["ok"] else "점검 실패 — 위 FAIL 항목을 보라")
             return 0 if report["ok"] else 1
@@ -1983,6 +2044,8 @@ def run(argv: list[str] | None = None) -> int:
             "clients": {name: {"hooks": str(h), "guide": str(g),
                                "installed_group": installed_group_index(h)}
                         for name in CLIENTS for h, g in [client_paths(name)]},
+            # 옛 qmd MCP 등록이 남아 있으면 어디에, 어떻게 떼는지. 비어 있으면 없다.
+            "legacy_qmd_mcp": legacy_qmd_mcp(root),
         }, ensure_ascii=False, indent=2))
         return 0
 

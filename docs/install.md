@@ -76,6 +76,11 @@ viewer 를 쓰지 않는다면 `--no-bun` 으로 이 단계만 건너뛸 수 있
 
 qmd 는 더 이상 받지 않는다 — 검색은 `llmwiki.py build` 가 굽는 `index/search.sqlite`
 가 한다. 옛 옵션 `--no-qmd` · `--with-qmd` · `--qmd-name` 은 받아들이되 경고만 내고 무시한다.
+qmd 를 MCP 서버로 직접 등록해 둔 기계(Claude 의 `mcp__qmd__*`, Codex 의
+`[mcp_servers.qmd]`)는 그 등록이 남아 있어도 collection 이 없어 빈손으로 답할 뿐이다.
+설치기가 등록한 것이 아니므로 자동으로 떼지 않는다 — `verify` 와 `doctor` 가
+`legacy-qmd-mcp` 항목으로 어디에 남았는지와 떼는 명령(`claude mcp remove --scope user qmd`,
+`codex mcp remove qmd`)을 알려 준다.
 
 **profile 을 건드리지 않는 법.** uv 설치기에는 `UV_NO_MODIFY_PATH=1` 과 옛 이름
 `INSTALLER_NO_MODIFY_PATH=1` 을 함께 준다. Bun 설치기에는 그런 스위치가 없고

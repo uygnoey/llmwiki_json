@@ -636,6 +636,59 @@ class McpTest(ContextCase):
 
 
 # --------------------------------------------------------------------------- global wiring
+class LegacyQmdMcpTest(ContextCase):
+    """옛 qmd MCP 등록은 우리가 만든 것이 아니다 — 찾아서 떼는 명령을 알려 줄 뿐, 건드리지 않는다."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.home = self.root_path / "home"
+        (self.home / ".codex").mkdir(parents=True)
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(self.home)
+        self.addCleanup(lambda: os.environ.__setitem__("HOME", old_home or ""))
+
+    def test_clean_machine_reports_nothing(self) -> None:
+        self.assertEqual(ctx.legacy_qmd_mcp(self.root_path), [])
+        (self.home / ".claude.json").write_text(json.dumps({"mcpServers": {"llmwiki": {}}}), encoding="utf-8")
+        (self.home / ".codex/config.toml").write_text("[mcp_servers.llmwiki]\ncommand = \"x\"\n", encoding="utf-8")
+        self.assertEqual(ctx.legacy_qmd_mcp(self.root_path), [])
+        report = ctx.verify(self.root_path, clients=())
+        item = next(c for c in report["checks"] if c["check"] == "legacy-qmd-mcp")
+        self.assertTrue(item["ok"])
+        self.assertNotIn("warn", item)
+
+    def test_finds_every_scope_and_names_the_removal(self) -> None:
+        (self.home / ".claude.json").write_text(json.dumps({
+            "mcpServers": {"qmd": {"command": "qmd", "args": ["mcp"]}},
+            "projects": {"/work/a": {"mcpServers": {"qmd": {"command": "qmd"}}},
+                         "/work/b": {"mcpServers": {"other": {}}}},
+        }), encoding="utf-8")
+        (self.root_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"qmd": {}}}), encoding="utf-8")
+        (self.home / ".codex/config.toml").write_text(
+            "[hooks.state]\nx = 1\n\n[mcp_servers.qmd]\ncommand = \"qmd\"\nargs = [\"mcp\"]\n", encoding="utf-8")
+        found = ctx.legacy_qmd_mcp(self.root_path)
+        self.assertEqual([f["remove"] for f in found], [
+            "claude mcp remove --scope user qmd",
+            "cd /work/a && claude mcp remove --scope local qmd",
+            f"cd {self.root_path} && claude mcp remove --scope project qmd",
+            "codex mcp remove qmd",
+        ])
+        self.assertEqual({f["client"] for f in found}, {"claude", "codex"})
+        report = ctx.verify(self.root_path, clients=())
+        item = next(c for c in report["checks"] if c["check"] == "legacy-qmd-mcp")
+        self.assertTrue(item["ok"])          # 통과는 한다 — 떼는 건 사용자 몫
+        self.assertTrue(item["warn"])
+        self.assertIn("codex mcp remove qmd", item["detail"])
+        # 아무것도 고치지 않았다
+        self.assertIn("mcp_servers.qmd", (self.home / ".codex/config.toml").read_text(encoding="utf-8"))
+        self.assertIn("qmd", json.loads((self.home / ".claude.json").read_text(encoding="utf-8"))["mcpServers"])
+
+    def test_broken_config_files_do_not_raise(self) -> None:
+        (self.home / ".claude.json").write_text("{not json", encoding="utf-8")
+        (self.root_path / ".mcp.json").write_text("[]", encoding="utf-8")
+        self.assertEqual(ctx.legacy_qmd_mcp(self.root_path), [])
+
+
 class GlobalInstallTest(ContextCase):
     """전역 hook 설정에 필요한 계약 — 설치 스크립트가 이 모양을 만든다."""
 
